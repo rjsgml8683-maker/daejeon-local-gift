@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="우리 상권 리스크 진단", page_icon="📊", layout="wide")
+st.set_page_config(page_title="우리 상권 지역화폐 흐름 진단", page_icon="📊", layout="wide")
 
 URL = "https://apis.data.go.kr/B190001/localGiftsPaymentV3/paymentsV3"
 REGIONS = {"30110": "동구", "30140": "중구", "30170": "서구",
@@ -17,7 +17,8 @@ GREEN = "#157f5a"
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def load(start_ym: str, end_ym: str) -> pd.DataFrame:
     key = st.secrets["SERVICE_KEY"]
-    rows, bar = [], st.progress(0.0, text="공공데이터포털에서 결제 데이터를 받는 중…")
+    rows, bar = [], st.progress(
+        0.0, text="공공데이터포털에서 결제 데이터를 받는 중입니다. 처음 접속 시 1분 정도 걸립니다…")
     for n, (code, name) in enumerate(REGIONS.items(), start=1):
         page = 1
         while True:
@@ -103,8 +104,7 @@ def advise(grade: str, slope: float, recent: float, avg: float):
 
 
 # ──────────────────────────────── 화면
-st.title("우리 상권 리스크 진단")
-st.caption("한국조폐공사 지역사랑상품권 결제정보 · 대전광역시")
+st.title("우리 상권 지역화폐 흐름 진단")
 
 with st.sidebar:
     st.header("분석 조건")
@@ -134,10 +134,32 @@ def grade_of(cv):
     return "안정" if cv < lo else ("보통" if cv < hi else "변동 큼")
 
 
-c1, c2 = st.columns(2)
-gu = c1.selectbox("자치구", list(REGIONS.values()), index=3)
+def fmt_ym(ym: str) -> str:
+    return f"{ym[:4]}년 {int(ym[4:])}월"
+
+
+span = sorted(m["crtr_ym"].unique())
+st.caption(f"한국조폐공사 지역사랑상품권 결제정보 · 대전광역시 · "
+           f"{fmt_ym(span[0])} ~ {fmt_ym(span[-1])} 기준 "
+           f"({len(stat)}개 행정동)")
+
+if st.button("대표 사례 비교 — 동구 가양동 vs 동구 가오동", use_container_width=True):
+    st.session_state["gu"] = "동구"
+    st.session_state["dong"] = "가양동"
+    st.session_state["pick"] = ["동구 가양동", "동구 가오동"]
+
+mobile = st.sidebar.checkbox("모바일 보기 (세로로 쌓기)", value=False,
+                             help="휴대폰에서 글자가 겹쳐 보이면 켜세요")
+
+c1, c2 = (st.container(), st.container()) if mobile else st.columns(2)
+gu_list = list(REGIONS.values())
+gu = c1.selectbox("자치구", gu_list,
+                  index=gu_list.index(st.session_state.get("gu", "유성구")))
 pool = stat[stat["지역"] == gu].sort_values("평균점유율", ascending=False)
-dong = c2.selectbox("행정동", pool["동"].tolist())
+dong_list = pool["동"].tolist()
+_d = st.session_state.get("dong")
+dong = c2.selectbox("행정동", dong_list,
+                    index=dong_list.index(_d) if _d in dong_list else 0)
 
 row = stat[(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0]
 cv, avg = row["변동계수"], row["평균점유율"]
@@ -150,7 +172,10 @@ recent, prev = share[-3:].mean(), share[-6:-3].mean()
 chg = (recent - prev) / prev * 100
 center, lowb, highb, slope = forecast(share, 3)
 
-k1, k2, k3, k4 = st.columns(4)
+if mobile:
+    (k1, k2), (k3, k4) = st.columns(2), st.columns(2)
+else:
+    k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f"### :{'green' if g=='안정' else 'orange' if g=='보통' else 'red'}[{g}]")
 k1.caption("변동성 등급")
 k2.metric("변동계수", f"{cv:.3f}")
@@ -170,7 +195,12 @@ t1, t2, t3, t4 = st.tabs(["비중 추이와 예측", "월별 결제금액", "대
 
 with t1:
     st.caption("대전 전체 지역화폐 결제액 중 이 동네의 비중. 마지막 세 구간은 추세를 연장한 예상치입니다.")
-    fut = [f"+{i}개월" for i in range(1, 4)]
+    def next_ym(ym: str, k: int) -> str:
+        y, mth = int(ym[:4]), int(ym[4:])
+        t = y * 12 + (mth - 1) + k
+        return f"{t // 12:04d}{t % 12 + 1:02d}"
+
+    fut = [next_ym(months[-1], i) for i in range(1, 4)]
     chart = pd.DataFrame(index=months + fut)
     chart["실적"] = list(share) + [np.nan] * 3
     chart["예상"] = [np.nan] * len(share) + list(center)
@@ -186,9 +216,9 @@ with t2:
     st.bar_chart((d.set_index("crtr_ym")["결제금액"] / 1e8).rename("억 원"), height=320)
 
 with t3:
-    pick = st.multiselect("비교할 상권",
-                          [f"{r.지역} {r.동}" for r in stat.itertuples()],
-                          default=[f"{gu} {dong}"])
+    options = [f"{r.지역} {r.동}" for r in stat.itertuples()]
+    default = [o for o in st.session_state.get("pick", [f"{gu} {dong}"]) if o in options]
+    pick = st.multiselect("비교할 상권", options, default=default or [f"{gu} {dong}"])
     if pick:
         wide = m.assign(상권=m["지역"] + " " + m["동"])
         wide = wide[wide["상권"].isin(pick)].pivot(
