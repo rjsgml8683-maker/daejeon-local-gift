@@ -5,6 +5,13 @@ import pandas as pd
 import requests
 import streamlit as st
 
+try:
+    import folium
+    from streamlit_folium import st_folium
+    HAS_FOLIUM = True
+except Exception:
+    HAS_FOLIUM = False
+
 st.set_page_config(page_title="우리 상권 지역화폐 리스크 진단",
                    page_icon="📊", layout="wide")
 
@@ -263,10 +270,28 @@ with t0:
             sel = (mp["지역"] == gu) & (mp["동"] == dong)
             mp.loc[sel, "color"] = "#1c1c1c"
             mp.loc[sel, "size"] = mp["size"].max() * 1.3
-            st.map(mp, latitude="lat", longitude="lon",
-                   size="size", color="color", zoom=10.5)
-            st.caption("원의 크기는 지역화폐 결제 비중, 색은 리스크 등급입니다. "
-                       "초록은 낮음, 주황은 보통, 빨강은 높음이며 검은 점이 지금 선택한 상권입니다.")
+            if HAS_FOLIUM:
+                fm = folium.Map(location=[36.345, 127.385], zoom_start=11,
+                                tiles=None, control_scale=True)
+                folium.TileLayer(
+                    tiles="https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png",
+                    attr="VWorld", name="브이월드").add_to(fm)
+                for r in mp.itertuples():
+                    picked = (r.지역 == gu and r.동 == dong)
+                    folium.CircleMarker(
+                        location=[r.lat, r.lon],
+                        radius=6 + r.평균점유율 / mp["평균점유율"].max() * 18,
+                        color="#1c1c1c" if picked else rgb(r.리스크점수),
+                        weight=3 if picked else 1,
+                        fill=True, fill_opacity=0.65,
+                        fill_color=rgb(r.리스크점수),
+                        tooltip=f"{r.지역} {r.동} · 리스크 {r.리스크점수:.0f}점 "
+                                f"· 비중 {r.평균점유율:.2f}%").add_to(fm)
+                st_folium(fm, height=460, use_container_width=True,
+                          returned_objects=[])
+            else:
+                st.map(mp, latitude="lat", longitude="lon",
+                       size="size", color="color", zoom=10.5)
             top = mp.nlargest(5, "리스크점수")[["지역", "동", "리스크점수"]]
             top["리스크점수"] = top["리스크점수"].round(0)
             st.caption("리스크가 높은 상권 : " +
