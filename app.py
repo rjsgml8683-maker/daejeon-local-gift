@@ -125,13 +125,13 @@ def forecast(series: np.ndarray, months: int = 3):
 def advise(row, slope):
     acts = []
     if row["정책점수"] >= 60:
-        acts.append(f"예산이 줄었던 달 매출이 많던 달의 **{row['잔존율']:.1f}%**까지 내려갔습니다. "
+        acts.append(f"예산이 줄었던 달 매출이 많던 달의 {row['잔존율']:.1f}%까지 내려갔습니다. "
                     "지역화폐 비수기를 가정해 2~3개월치 고정비를 따로 확보해 두세요.")
     if row["집중점수"] >= 60:
-        acts.append(f"결제의 **{row['최대고객층비중']:.0f}%**가 {row['최대고객층']}에 몰려 있습니다. "
+        acts.append(f"결제의 {row['최대고객층비중']:.0f}%가 {row['최대고객층']}에 몰려 있습니다. "
                     "이 고객층의 소비가 줄면 타격이 큽니다. 다른 연령대를 겨냥한 메뉴나 시간대를 검토하세요.")
     if row["하락개월"] >= 4 or row["최근추세"] < -10:
-        acts.append(f"최근 6개월 중 **{int(row['하락개월'])}개월**이 전월보다 낮았습니다. "
+        acts.append(f"최근 6개월 중 {int(row['하락개월'])}개월이 전월보다 낮았습니다. "
                     "인근 상권으로 수요가 옮겨가고 있는지 확인하세요.")
     if slope > 0.005:
         acts.append("비중이 올라가는 추세입니다. 늘어난 방문을 단골로 묶을 방법을 준비하세요.")
@@ -141,6 +141,48 @@ def advise(row, slope):
 
 
 # ──────────────────────────────── 화면
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+html, body, .stApp, .stApp * { font-family: 'Noto Sans KR', system-ui, sans-serif !important; }
+#MainMenu, footer, [data-testid="stStatusWidget"] { visibility: hidden; }
+.stApp .block-container { padding-top: 2rem; max-width: 1180px; }
+
+h1 { font-size: 2.1rem !important; letter-spacing: -0.04em !important; }
+
+/* 지표 카드 */
+.stApp [data-testid="stMetric"] {
+  background: #fff !important; border: 1px solid #e6e6e6 !important;
+  border-radius: 14px !important; padding: 16px 18px !important;
+}
+.stApp [data-testid="stMetricValue"] { font-size: 1.65rem !important; font-weight: 700 !important; }
+.stApp [data-testid="stMetricLabel"] { color: #6b6b6b !important; }
+
+/* 탭 — 알약 버튼 */
+.stApp .stTabs [role="tab"] {
+  background: #fafafa !important; border: 1px solid #ededed !important;
+  border-radius: 999px !important; padding: 6px 18px !important;
+  margin-right: 8px !important; font-size: .92rem !important;
+}
+.stApp .stTabs [role="tab"][aria-selected="true"] {
+  background: #157F5A !important; border-color: #157F5A !important;
+}
+.stApp .stTabs [role="tab"][aria-selected="true"] * { color: #fff !important; }
+.stApp .stTabs [role="tablist"] { gap: 0 !important; border-bottom: none !important; }
+.stApp .stTabs [data-baseweb="tab-highlight"],
+.stApp .stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+/* 안내 박스 */
+.stApp [data-testid="stAlert"] {
+  border-radius: 14px !important; border: 1px solid #e6e6e6 !important;
+  background: #fafafa !important;
+}
+
+/* 사이드바 */
+.stApp [data-testid="stSidebar"] { background: #fafafa; border-right: 1px solid #ededed; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("우리 상권 지역화폐 리스크 진단")
 
 with st.sidebar:
@@ -207,15 +249,15 @@ else:
     k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f"### :{color}[리스크 {grade}]")
 k1.caption(f"종합 {score:.0f}점 / 100")
-k2.metric("정책 의존", f"{row['정책점수']:.0f}점", f"잔존율 {row['잔존율']:.1f}%",
-          delta_color="off")
-k3.metric("고객층 집중", f"{row['집중점수']:.0f}점",
-          f"{row['최대고객층']} {row['최대고객층비중']:.0f}%", delta_color="off")
-k4.metric("하락 지속", f"{row['추세점수']:.0f}점",
-          f"6개월 중 {int(row['하락개월'])}개월 하락", delta_color="off")
+k2.metric("정책 의존", f"{row['정책점수']:.0f}점")
+k2.caption(f"예산 저점기 잔존율 {row['잔존율']:.1f}%")
+k3.metric("고객층 집중", f"{row['집중점수']:.0f}점")
+k3.caption(f"{row['최대고객층']}에 {row['최대고객층비중']:.0f}% 집중")
+k4.metric("하락 지속", f"{row['추세점수']:.0f}점")
+k4.caption(f"최근 6개월 중 {int(row['하락개월'])}개월 하락")
 
-st.info(f"**{gu} {dong}** — 최근 3개월 지역화폐 결제 비중은 **{recent:.2f}%**, "
-        f"3개월 뒤 예상은 **{center[-1]:.2f}%**입니다. "
+st.info(f"{gu} {dong} — 최근 3개월 지역화폐 결제 비중은 {recent:.2f}%, "
+        f"3개월 뒤 예상은 {center[-1]:.2f}%입니다. "
         f"24개월 평균 비중은 {row['평균점유율']:.2f}%입니다.")
 
 st.subheader("무엇을 하면 좋을까")
@@ -250,7 +292,7 @@ with t2:
     pv = sub.pivot_table(index="연령대", columns="성별",
                          values="stlm_amt", aggfunc="sum").fillna(0)
     st.bar_chart((pv / pv.values.sum() * 100).round(1), height=320)
-    st.caption(f"가장 큰 고객층은 **{row['최대고객층']}**으로 전체의 "
+    st.caption(f"가장 큰 고객층은 {row['최대고객층']}으로 전체의 "
                f"{row['최대고객층비중']:.0f}%를 차지합니다.")
 
 with t3:
