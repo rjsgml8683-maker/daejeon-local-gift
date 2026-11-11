@@ -54,6 +54,15 @@ def load(start_ym: str, end_ym: str) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner=False)
+def load_coords() -> pd.DataFrame:
+    """행정동 중심 좌표 (전국일반음식점표준데이터의 업소 좌표 중앙값)"""
+    try:
+        return pd.read_csv("dong_coords.csv")
+    except Exception:
+        return pd.DataFrame(columns=["지역", "동", "lat", "lon"])
+
+
 def build(df: pd.DataFrame, min_share: float):
     """월 × 행정동 집계와 세 가지 리스크 지표를 계산한다."""
     base = df[df["동"] != "기타"]
@@ -141,48 +150,6 @@ def advise(row, slope):
 
 
 # ──────────────────────────────── 화면
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
-<style>
-html, body, .stApp, .stApp * { font-family: 'Noto Sans KR', system-ui, sans-serif !important; }
-#MainMenu, footer, [data-testid="stStatusWidget"] { visibility: hidden; }
-.stApp .block-container { padding-top: 2rem; max-width: 1180px; }
-
-h1 { font-size: 2.1rem !important; letter-spacing: -0.04em !important; }
-
-/* 지표 카드 */
-.stApp [data-testid="stMetric"] {
-  background: #fff !important; border: 1px solid #e6e6e6 !important;
-  border-radius: 14px !important; padding: 16px 18px !important;
-}
-.stApp [data-testid="stMetricValue"] { font-size: 1.65rem !important; font-weight: 700 !important; }
-.stApp [data-testid="stMetricLabel"] { color: #6b6b6b !important; }
-
-/* 탭 — 알약 버튼 */
-.stApp .stTabs [role="tab"] {
-  background: #fafafa !important; border: 1px solid #ededed !important;
-  border-radius: 999px !important; padding: 6px 18px !important;
-  margin-right: 8px !important; font-size: .92rem !important;
-}
-.stApp .stTabs [role="tab"][aria-selected="true"] {
-  background: #157F5A !important; border-color: #157F5A !important;
-}
-.stApp .stTabs [role="tab"][aria-selected="true"] * { color: #fff !important; }
-.stApp .stTabs [role="tablist"] { gap: 0 !important; border-bottom: none !important; }
-.stApp .stTabs [data-baseweb="tab-highlight"],
-.stApp .stTabs [data-baseweb="tab-border"] { display: none !important; }
-
-/* 안내 박스 */
-.stApp [data-testid="stAlert"] {
-  border-radius: 14px !important; border: 1px solid #e6e6e6 !important;
-  background: #fafafa !important;
-}
-
-/* 사이드바 */
-.stApp [data-testid="stSidebar"] { background: #fafafa; border-right: 1px solid #ededed; }
-</style>
-""", unsafe_allow_html=True)
-
 st.title("우리 상권 지역화폐 리스크 진단")
 
 with st.sidebar:
@@ -248,13 +215,23 @@ if mobile:
 else:
     k1, k2, k3, k4 = st.columns(4)
 k1.markdown(f"### :{color}[리스크 {grade}]")
+k1.progress(min(int(score), 100))
 k1.caption(f"종합 {score:.0f}점 / 100")
-k2.metric("정책 의존", f"{row['정책점수']:.0f}점")
-k2.caption(f"예산 저점기 잔존율 {row['잔존율']:.1f}%")
-k3.metric("고객층 집중", f"{row['집중점수']:.0f}점")
-k3.caption(f"{row['최대고객층']}에 {row['최대고객층비중']:.0f}% 집중")
-k4.metric("하락 지속", f"{row['추세점수']:.0f}점")
-k4.caption(f"최근 6개월 중 {int(row['하락개월'])}개월 하락")
+def tone(v):
+    return "red" if v >= 66 else ("orange" if v >= 33 else "green")
+
+
+def gauge(col, label, value, note):
+    col.markdown(f"**{label}**  :{tone(value)}[{value:.0f}점]")
+    col.progress(min(int(value), 100))
+    col.caption(note)
+
+
+gauge(k2, "정책 의존", row["정책점수"], f"예산 저점기 잔존율 {row['잔존율']:.1f}%")
+gauge(k3, "고객층 집중", row["집중점수"],
+      f"{row['최대고객층']}에 {row['최대고객층비중']:.0f}% 집중")
+gauge(k4, "하락 지속", row["추세점수"],
+      f"최근 6개월 중 {int(row['하락개월'])}개월 하락")
 
 st.info(f"{gu} {dong} — 최근 3개월 지역화폐 결제 비중은 {recent:.2f}%, "
         f"3개월 뒤 예상은 {center[-1]:.2f}%입니다. "
@@ -264,8 +241,36 @@ st.subheader("무엇을 하면 좋을까")
 for a in advise(row, slope):
     st.markdown(f"- {a}")
 
-t1, t2, t3, t4, t5 = st.tabs(
-    ["비중 추이와 예측", "고객층 구성", "월별 결제금액", "대전 전체 비교", "지표 설명"])
+t0, t1, t2, t3, t4, t5 = st.tabs(
+    ["대전 지도", "비중 추이와 예측", "고객층 구성", "월별 결제금액",
+     "대전 전체 비교", "지표 설명"])
+
+with t0:
+    coords = load_coords()
+    if coords.empty:
+        st.info("좌표 파일(dong_coords.csv)이 저장소에 없어 지도를 표시할 수 없습니다.")
+    else:
+        mp = stat.merge(coords, on=["지역", "동"], how="inner")
+        if mp.empty:
+            st.info("좌표와 연결된 행정동이 없습니다.")
+        else:
+            mp["size"] = 120 + mp["평균점유율"] / mp["평균점유율"].max() * 500
+            def rgb(v):
+                if v >= 66:
+                    return "#d1495b"
+                return "#f0a202" if v >= 33 else "#157f5a"
+            mp["color"] = mp["리스크점수"].apply(rgb)
+            sel = (mp["지역"] == gu) & (mp["동"] == dong)
+            mp.loc[sel, "color"] = "#1c1c1c"
+            mp.loc[sel, "size"] = mp["size"].max() * 1.3
+            st.map(mp, latitude="lat", longitude="lon",
+                   size="size", color="color", zoom=10.5)
+            st.caption("원의 크기는 지역화폐 결제 비중, 색은 리스크 등급입니다. "
+                       "초록은 낮음, 주황은 보통, 빨강은 높음이며 검은 점이 지금 선택한 상권입니다.")
+            top = mp.nlargest(5, "리스크점수")[["지역", "동", "리스크점수"]]
+            top["리스크점수"] = top["리스크점수"].round(0)
+            st.caption("리스크가 높은 상권 : " +
+                       ", ".join(f"{r.지역} {r.동}({r.리스크점수:.0f})" for r in top.itertuples()))
 
 with t1:
     st.caption("대전 전체 지역화폐 결제액 중 이 동네의 비중. 마지막 세 구간은 추세를 연장한 예상치입니다.")
