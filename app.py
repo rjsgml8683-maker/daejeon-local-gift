@@ -138,43 +138,73 @@ def forecast(series: np.ndarray, months: int = 3):
     return center, np.clip(center - 1.96 * sigma, 0.01, None), center + 1.96 * sigma, slope
 
 
+def headline(row, grade):
+    """한 줄 진단 문장."""
+    body = {"안심": "지역화폐 매출이 꾸준한 편입니다",
+            "주의": "지역화폐 매출이 때때로 흔들리는 편입니다",
+            "조심": "지역화폐 매출이 크게 흔들리는 편입니다"}[grade]
+    tail = ""
+    top = max([("정책", row["정책점수"]), ("고객층", row["집중점수"]),
+               ("하락", row["추세점수"])], key=lambda x: x[1])
+    if top[1] >= 60:
+        tail = {"정책": " 다만 예산 정책에는 특히 민감한 상권입니다",
+                "고객층": " 다만 손님층이 한쪽에 몰려 있는 상권입니다",
+                "하락": " 다만 최근 몇 달 계속 줄어드는 중입니다"}[top[0]]
+    return body + tail
+
+
 def advise(row, slope):
-    acts = []
+    """가장 두드러진 한 가지를 중심으로 제안한다."""
+    cards = []
     if row["정책점수"] >= 60:
-        acts.append(f"예산이 줄었던 달 매출이 많던 달의 {row['잔존율']:.1f}%까지 내려갔습니다. "
-                    "지역화폐 비수기를 가정해 2~3개월치 고정비를 따로 확보해 두세요.")
+        cards.append((
+            "예산이 줄면 크게 흔들려요",
+            f"작년처럼 지역화폐 예산이 줄었을 때, 이 동네 매출은 평소의 "
+            f"**{row['잔존율']:.0f}% 수준**까지 떨어졌습니다.",
+            "지역화폐 비수기를 대비해 운영비 두세 달치를 따로 두세요. "
+            "할인율이나 발행 한도가 바뀐다는 시청 공지는 미리 챙겨 보시고요."))
     if row["집중점수"] >= 60:
-        acts.append(f"결제의 {row['최대고객층비중']:.0f}%가 {row['최대고객층']}에 몰려 있습니다. "
-                    "이 고객층의 소비가 줄면 타격이 큽니다. 다른 연령대를 겨냥한 메뉴나 시간대를 검토하세요.")
+        cards.append((
+            "손님층이 한쪽에 몰려 있어요",
+            f"결제의 **{row['최대고객층비중']:.0f}%**가 {row['최대고객층']} 손님입니다.",
+            "이 손님들이 줄면 타격이 큽니다. 다른 연령대가 찾을 만한 메뉴나 "
+            "시간대를 하나쯤 만들어 두면 완충이 됩니다."))
     if row["하락개월"] >= 4 or row["최근추세"] < -10:
-        acts.append(f"최근 6개월 중 {int(row['하락개월'])}개월이 전월보다 낮았습니다. "
-                    "인근 상권으로 수요가 옮겨가고 있는지 확인하세요.")
+        cards.append((
+            "최근 계속 줄고 있어요",
+            f"최근 6개월 중 **{int(row['하락개월'])}개월**이 전달보다 낮았습니다.",
+            "가까운 동네로 손님이 옮겨가고 있는지 확인해 보세요. "
+            "비교 탭에서 이웃 상권과 나란히 볼 수 있습니다."))
+    if not cards:
+        cards.append((
+            "지금은 별다른 신호가 없어요",
+            "세 가지 지표 모두 대전 평균 범위 안에 있습니다.",
+            "분기에 한 번 정도 이 화면을 열어 흐름만 확인하시면 충분합니다."))
     if slope > 0.005:
-        acts.append("비중이 올라가는 추세입니다. 늘어난 방문을 단골로 묶을 방법을 준비하세요.")
-    if not acts:
-        acts.append("세 지표 모두 평균 범위입니다. 분기마다 비중 변화를 확인하는 정도로 충분합니다.")
-    return acts
+        cards.append((
+            "다만 최근에는 올라가는 중",
+            "지역화폐 소비 비중이 오르는 추세입니다.",
+            "늘어난 방문을 단골로 묶을 방법을 지금 준비해 두면 좋습니다."))
+    return cards
 
 
 # ──────────────────────────────── 화면
-st.title("우리 상권 지역화폐 리스크 진단")
+st.title("우리 동네 지역화폐 장사 진단")
 
 with st.sidebar:
-    st.header("분석 조건")
-    years = st.slider("분석 기간 (연월)", 2023, 2026, (2024, 2025))
+    st.header("설정")
+    mobile = st.checkbox("휴대폰으로 보기", value=False,
+                         help="글자가 겹쳐 보이면 켜세요")
+    with st.expander("분석 조건 (전문가용)"):
+        years = st.slider("분석 기간 (연월)", 2023, 2026, (2024, 2025))
+        min_share = st.number_input("최소 평균 비중 (%)", 0.0, 5.0, 0.3, 0.1)
+        if st.button("가양동 · 가오동 불러오기", use_container_width=True):
+            st.session_state.update(gu="동구", dong="가양동",
+                                    pick=["동구 가양동", "동구 가오동"])
     start_ym, end_ym = f"{years[0]}01", f"{years[1]}12"
-    min_share = st.number_input("최소 평균 점유율 (%)", 0.0, 5.0, 0.3, 0.1)
-    mobile = st.checkbox("모바일 보기 (세로로 쌓기)", value=False,
-                         help="휴대폰에서 글자가 겹쳐 보이면 켜세요")
     st.divider()
-    st.caption("리스크 점수 = 정책 의존 40% + 고객층 집중 30% + 하락 지속 30%. "
-               "대전 안에서의 상대 순위를 0~100으로 환산합니다.")
-    st.caption("폐업 위험이 아니라 매출이 흔들릴 가능성을 봅니다. "
-               "폐업률과의 상관은 확인되지 않았습니다(r=0.06, p=0.65).")
-    go = st.button("가양동 · 가오동 불러오기", use_container_width=True)
-    if go:
-        st.session_state.update(gu="동구", dong="가양동",
-                                pick=["동구 가양동", "동구 가오동"])
+    st.caption("한국조폐공사가 공개한 지역사랑상품권 결제 자료로 만들었습니다. "
+               "가게 한 곳이 아니라 동네 단위로 보여 드립니다.")
 
 if "SERVICE_KEY" not in st.secrets:
     st.error("인증키가 설정되지 않았습니다. 앱 설정의 Secrets에 SERVICE_KEY를 등록하세요.")
@@ -208,8 +238,8 @@ dong = c2.selectbox("행정동", dong_list,
 
 row = stat[(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0]
 score = row["리스크점수"]
-grade = "높음" if score >= 66 else ("보통" if score >= 33 else "낮음")
-color = "red" if grade == "높음" else ("orange" if grade == "보통" else "green")
+grade = "조심" if score >= 66 else ("주의" if score >= 33 else "안심")
+color = {"조심": "red", "주의": "orange", "안심": "green"}[grade]
 
 d = m[(m["지역"] == gu) & (m["동"] == dong)].sort_values("crtr_ym")
 share = d["점유율"].to_numpy()
@@ -217,40 +247,41 @@ months = d["crtr_ym"].tolist()
 recent = share[-3:].mean()
 center, lowb, highb, slope = forecast(share, 3)
 
-if mobile:
-    (k1, k2), (k3, k4) = st.columns(2), st.columns(2)
-else:
-    k1, k2, k3, k4 = st.columns(4)
-k1.markdown(f"### :{color}[리스크 {grade}]")
-k1.progress(min(int(score), 100))
-k1.caption(f"종합 {score:.0f}점 / 100")
-def tone(v):
-    return "red" if v >= 66 else ("orange" if v >= 33 else "green")
+st.markdown(f"## :{color}[{grade}] · {dong}은 {headline(row, grade)}")
+st.write("")
+
+for title, fact, action in advise(row, slope):
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        st.markdown(fact)
+        st.caption(action)
+
+st.write("")
+st.markdown("#### 우리 동네 지역화폐 소비가 어떻게 움직였나")
+st.caption("대전 전체 지역화폐 결제액 가운데 이 동네가 차지한 몫입니다. "
+           "맨 뒤 세 칸은 지금 흐름이 이어진다면 어떻게 될지 내다본 값입니다.")
 
 
-def gauge(col, label, value, note):
-    col.markdown(f"**{label}**  :{tone(value)}[{value:.0f}점]")
-    col.progress(min(int(value), 100))
-    col.caption(note)
+def next_ym(ym, k):
+    t = int(ym[:4]) * 12 + int(ym[4:]) - 1 + k
+    return f"{t // 12:04d}{t % 12 + 1:02d}"
 
 
-gauge(k2, "정책 의존", row["정책점수"], f"예산 저점기 잔존율 {row['잔존율']:.1f}%")
-gauge(k3, "고객층 집중", row["집중점수"],
-      f"{row['최대고객층']}에 {row['최대고객층비중']:.0f}% 집중")
-gauge(k4, "하락 지속", row["추세점수"],
-      f"최근 6개월 중 {int(row['하락개월'])}개월 하락")
+fut = [next_ym(months[-1], i) for i in range(1, 4)]
+pad = [np.nan] * (len(share) - 1) + [share[-1]]
+front = pd.DataFrame(index=months + fut)
+front["지금까지"] = list(share) + [np.nan] * 3
+front["앞으로 예상"] = pad + list(center)
+st.line_chart(front, height=300, color=[GREEN, "#bdbdbd"])
+st.caption(f"최근 석 달 평균 {recent:.2f}%, 석 달 뒤 예상 {center[-1]:.2f}%. "
+           "예상은 지난 1년 흐름을 이어 본 값으로 평균 20% 정도 어긋납니다.")
 
-st.info(f"{gu} {dong} — 최근 3개월 지역화폐 결제 비중은 {recent:.2f}%, "
-        f"3개월 뒤 예상은 {center[-1]:.2f}%입니다. "
-        f"24개월 평균 비중은 {row['평균점유율']:.2f}%입니다.")
-
-st.subheader("무엇을 하면 좋을까")
-for a in advise(row, slope):
-    st.markdown(f"- {a}")
+st.write("")
+st.markdown("##### 더 자세히 보기")
 
 t0, t1, t2, t3, t4, t5 = st.tabs(
-    ["대전 지도", "비중 추이와 예측", "고객층 구성", "월별 결제금액",
-     "대전 전체 비교", "지표 설명"])
+    ["우리 동네 위치", "누가 쓰나", "달마다 얼마나", "다른 동네와 비교",
+     "분석 방법", "이 진단의 한계"])
 
 with t0:
     coords = load_coords()
@@ -298,50 +329,51 @@ with t0:
                        ", ".join(f"{r.지역} {r.동}({r.리스크점수:.0f})" for r in top.itertuples()))
 
 with t1:
-    st.caption("대전 전체 지역화폐 결제액 중 이 동네의 비중. 마지막 세 구간은 추세를 연장한 예상치입니다.")
-
-    def next_ym(ym, k):
-        t = int(ym[:4]) * 12 + int(ym[4:]) - 1 + k
-        return f"{t // 12:04d}{t % 12 + 1:02d}"
-
-    fut = [next_ym(months[-1], i) for i in range(1, 4)]
-    pad = [np.nan] * (len(share) - 1) + [share[-1]]
-    chart = pd.DataFrame(index=months + fut)
-    chart["실적"] = list(share) + [np.nan] * 3
-    chart["예상"] = pad + list(center)
-    chart["예상 하한"] = pad + list(lowb)
-    chart["예상 상한"] = pad + list(highb)
-    st.line_chart(chart, height=340, color=[GREEN, "#9a9a9a", "#dfdfdf", "#dfdfdf"])
-    st.caption("최근 12개월 선형 추세를 연장한 값입니다. 과거 자료로 검증한 3개월 예측 "
-               "평균 오차율은 약 20%(중앙값 11%)이며, 정책이 바뀌면 크게 벗어날 수 있습니다.")
-
-with t2:
-    st.caption("최근 12개월 결제액을 성별 · 연령대로 나눈 구성입니다. 한 칸에 쏠릴수록 리스크가 큽니다.")
+    st.caption("최근 1년간 결제액을 성별 · 나이대로 나눈 모습입니다. "
+               "한쪽으로 몰려 있을수록 그 손님들이 줄었을 때 타격이 큽니다.")
     sub = df[(df["지역"] == gu) & (df["동"] == dong) &
              (df["crtr_ym"].isin(months[-12:]))]
     pv = sub.pivot_table(index="연령대", columns="성별",
                          values="stlm_amt", aggfunc="sum").fillna(0)
     st.bar_chart((pv / pv.values.sum() * 100).round(1), height=320)
-    st.caption(f"가장 큰 고객층은 {row['최대고객층']}으로 전체의 "
-               f"{row['최대고객층비중']:.0f}%를 차지합니다.")
+    st.caption(f"가장 큰 손님층은 {row['최대고객층']}으로 전체의 "
+               f"{row['최대고객층비중']:.0f}%입니다.")
 
-with t3:
-    st.caption("금액 자체는 발행 예산과 할인 정책에 따라 출렁입니다. "
-               f"결제가 가장 적었던 달은 {', '.join(fmt_ym(x) for x in sorted(low_m)[:3])} 등입니다.")
+with t2:
+    st.caption("달마다 이 동네에서 지역화폐로 결제된 금액입니다. "
+               "전체가 함께 오르내리는 것은 상권이 아니라 예산 때문입니다.")
     st.bar_chart((d.set_index("crtr_ym")["결제금액"] / 1e8).rename("억 원"), height=320)
 
-with t4:
+with t3:
     options = [f"{r.지역} {r.동}" for r in stat.itertuples()]
     default = [o for o in st.session_state.get("pick", [f"{gu} {dong}"]) if o in options]
-    pick = st.multiselect("비교할 상권", options, default=default or [f"{gu} {dong}"])
+    pick = st.multiselect("견주어 볼 동네", options, default=default or [f"{gu} {dong}"])
     if pick:
         wide = m.assign(상권=m["지역"] + " " + m["동"])
         wide = wide[wide["상권"].isin(pick)].pivot(
             index="crtr_ym", columns="상권", values="점유율")
         st.line_chart(wide, height=320)
+    st.caption("같은 대전 안에서도 동네마다 흐름이 꽤 다릅니다.")
+
+with t4:
+    st.markdown("##### 이 동네의 세 가지 지표")
+    g1, g2, g3 = st.columns(3)
+    for col, label, val, note in [
+            (g1, "정책 의존", row["정책점수"], f"예산 저점기 잔존율 {row['잔존율']:.1f}%"),
+            (g2, "손님층 집중", row["집중점수"],
+             f"{row['최대고객층']} {row['최대고객층비중']:.0f}%"),
+            (g3, "하락 지속", row["추세점수"],
+             f"6개월 중 {int(row['하락개월'])}개월 하락")]:
+        col.markdown(f"**{label}** {val:.0f}점")
+        col.progress(min(int(val), 100))
+        col.caption(note)
+    st.caption(f"변동계수 {row['변동계수']:.3f} · 24개월 평균 비중 {row['평균점유율']:.2f}% · "
+               f"종합 {score:.0f}점 (정책 40% + 집중 30% + 하락 30%)")
+
+    st.markdown("##### 대전 전체 순위")
     view = stat.copy()
     view["등급"] = pd.cut(view["리스크점수"], [-1, 33, 66, 101],
-                        labels=["낮음", "보통", "높음"])
+                        labels=["안심", "주의", "조심"])
     for c in ["리스크점수", "정책점수", "집중점수", "추세점수"]:
         view[c] = view[c].round(0)
     view["잔존율"] = view["잔존율"].round(1)
