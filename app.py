@@ -213,8 +213,9 @@ st.title("우리 동네 지역화폐 리스크 진단")
 
 with st.sidebar:
     st.header("설정")
-    mobile = st.checkbox("휴대폰으로 보기", value=False,
-                         help="글자가 겹쳐 보이면 켜세요")
+    wide = st.checkbox("넓은 화면으로 보기", value=False,
+                       help="PC나 태블릿에서 보실 때 켜면 가로로 넓게 배치됩니다")
+    mobile = not wide
     with st.expander("분석 조건 (전문가용)"):
         years = st.slider("분석 기간 (연월)", 2023, 2026, (2024, 2025))
         min_share = st.number_input("최소 평균 비중 (%)", 0.0, 5.0, 0.3, 0.1)
@@ -254,6 +255,8 @@ view_mode = st.radio("보기", ["사장님용", "분석용"], horizontal=True,
 st.write("")
 
 c1, c2 = (st.container(), st.container()) if mobile else st.columns(2)
+if mobile:
+    st.caption("자치구와 행정동을 차례로 골라 주세요")
 gu_list = list(REGIONS.values())
 gu = c1.selectbox("자치구", gu_list,
                   index=gu_list.index(st.session_state.get("gu", "유성구")))
@@ -301,27 +304,27 @@ card = f"""
   <div style="font-size:19px;line-height:1.55;font-weight:500;margin-bottom:22px">
     {headline(row, grade)}
   </div>
-  <div style="display:flex;flex-wrap:wrap;gap:0;border-top:1px solid #f0f0f0;
-              padding-top:18px">
-    <div style="flex:1;min-width:120px">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+              gap:16px;border-top:1px solid #f0f0f0;padding-top:18px">
+    <div>
       <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">우리 동네 몫</div>
       <div style="font-size:24px;font-weight:700">{recent:.2f}<span
            style="font-size:14px;font-weight:500">%</span></div>
       <div style="font-size:12px;color:#8a8a8a">최근 석 달</div>
     </div>
-    <div style="flex:1;min-width:120px">
+    <div>
       <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">흔들림 순위</div>
       <div style="font-size:24px;font-weight:700">{rank}<span
            style="font-size:14px;font-weight:500">위</span></div>
       <div style="font-size:12px;color:#8a8a8a">{len(stat)}개 동네 중</div>
     </div>
-    <div style="flex:1;min-width:120px">
+    <div>
       <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">저점기 잔존율</div>
       <div style="font-size:24px;font-weight:700">{row['잔존율']:.0f}<span
            style="font-size:14px;font-weight:500">%</span></div>
       <div style="font-size:12px;color:#8a8a8a">한산한 달에 남는 결제</div>
     </div>
-    <div style="flex:1;min-width:120px">
+    <div>
       <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">주요 손님층</div>
       <div style="font-size:24px;font-weight:700">{row['최대고객층']}</div>
       <div style="font-size:12px;color:#8a8a8a">결제의 {row['최대고객층비중']:.0f}%</div>
@@ -335,7 +338,7 @@ card = f"""
   </div>
 </div>
 """
-components.html(card, height=330 if not mobile else 520, scrolling=False)
+components.html(card, height=620 if mobile else 360, scrolling=False)
 
 st.write("")
 st.write("")
