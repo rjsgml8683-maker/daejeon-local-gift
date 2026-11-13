@@ -226,6 +226,10 @@ span = sorted(m["crtr_ym"].unique())
 st.caption(f"한국조폐공사 지역사랑상품권 결제정보 · 대전광역시 · "
            f"{fmt_ym(span[0])} ~ {fmt_ym(span[-1])} 기준 ({len(stat)}개 행정동)")
 
+view_mode = st.radio("보기", ["사장님용", "분석용"], horizontal=True,
+                     label_visibility="collapsed")
+st.write("")
+
 c1, c2 = (st.container(), st.container()) if mobile else st.columns(2)
 gu_list = list(REGIONS.values())
 gu = c1.selectbox("자치구", gu_list,
@@ -249,6 +253,10 @@ center, lowb, highb, slope = forecast(share, 3)
 
 st.markdown(f"## :{color}[{grade}] · {dong}은 {headline(row, grade)}")
 st.write("")
+
+if view_mode == "분석용":
+    st.caption(f"변동계수 {row['변동계수']:.3f} · 24개월 평균 비중 "
+               f"{row['평균점유율']:.2f}% · 종합 {score:.0f}점")
 
 for title, fact, action in advise(row, slope):
     with st.container(border=True):
@@ -279,9 +287,16 @@ st.caption(f"최근 석 달 평균 {recent:.2f}%, 석 달 뒤 예상 {center[-1]
 st.write("")
 st.markdown("##### 더 자세히 보기")
 
-t0, t1, t2, t3, t4, t5 = st.tabs(
-    ["우리 동네 위치", "누가 쓰나", "달마다 얼마나", "다른 동네와 비교",
-     "분석 방법", "이 진단의 한계"])
+if view_mode == "사장님용":
+    names = ["우리 동네 위치", "누가 쓰나", "달마다 얼마나"]
+else:
+    names = ["우리 동네 위치", "누가 쓰나", "달마다 얼마나",
+             "다른 동네와 비교", "분석 방법", "이 진단의 한계"]
+tabs = st.tabs(names)
+t0, t1, t2 = tabs[0], tabs[1], tabs[2]
+t3 = tabs[3] if len(tabs) > 3 else st.empty()
+t4 = tabs[4] if len(tabs) > 4 else st.empty()
+t5 = tabs[5] if len(tabs) > 5 else st.empty()
 
 with t0:
     coords = load_coords()
@@ -344,7 +359,8 @@ with t2:
                "전체가 함께 오르내리는 것은 상권이 아니라 예산 때문입니다.")
     st.bar_chart((d.set_index("crtr_ym")["결제금액"] / 1e8).rename("억 원"), height=320)
 
-with t3:
+if view_mode == "분석용":
+  with t3:
     options = [f"{r.지역} {r.동}" for r in stat.itertuples()]
     default = [o for o in st.session_state.get("pick", [f"{gu} {dong}"]) if o in options]
     pick = st.multiselect("견주어 볼 동네", options, default=default or [f"{gu} {dong}"])
@@ -355,7 +371,8 @@ with t3:
         st.line_chart(wide, height=320)
     st.caption("같은 대전 안에서도 동네마다 흐름이 꽤 다릅니다.")
 
-with t4:
+if view_mode == "분석용":
+  with t4:
     st.markdown("##### 이 동네의 세 가지 지표")
     g1, g2, g3 = st.columns(3)
     for col, label, val, note in [
@@ -381,7 +398,8 @@ with t4:
                        "집중점수", "추세점수", "잔존율", "최대고객층"]],
                  hide_index=True, use_container_width=True)
 
-with t5:
+if view_mode == "분석용":
+  with t5:
     st.markdown(f"""
 **리스크 점수 구성**
 
