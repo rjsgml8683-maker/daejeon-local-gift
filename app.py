@@ -160,19 +160,19 @@ def advise(row, slope):
         cards.append((
             "예산이 줄면 크게 흔들려요",
             f"작년처럼 지역화폐 예산이 줄었을 때, 이 동네 매출은 평소의 "
-            f"**{row['잔존율']:.0f}% 수준**까지 떨어졌습니다.",
+            f"{row['잔존율']:.0f}% 수준까지 떨어졌습니다.",
             "지역화폐 비수기를 대비해 운영비 두세 달치를 따로 두세요. "
             "할인율이나 발행 한도가 바뀐다는 시청 공지는 미리 챙겨 보시고요."))
     if row["집중점수"] >= 60:
         cards.append((
             "손님층이 한쪽에 몰려 있어요",
-            f"결제의 **{row['최대고객층비중']:.0f}%**가 {row['최대고객층']} 손님입니다.",
+            f"결제의 {row['최대고객층비중']:.0f}%가 {row['최대고객층']} 손님입니다.",
             "이 손님들이 줄면 타격이 큽니다. 다른 연령대가 찾을 만한 메뉴나 "
             "시간대를 하나쯤 만들어 두면 완충이 됩니다."))
     if row["하락개월"] >= 4 or row["최근추세"] < -10:
         cards.append((
             "최근 계속 줄고 있어요",
-            f"최근 6개월 중 **{int(row['하락개월'])}개월**이 전달보다 낮았습니다.",
+            f"최근 6개월 중 {int(row['하락개월'])}개월이 전달보다 낮았습니다.",
             "가까운 동네로 손님이 옮겨가고 있는지 확인해 보세요. "
             "비교 탭에서 이웃 상권과 나란히 볼 수 있습니다."))
     if not cards:
@@ -180,12 +180,12 @@ def advise(row, slope):
             "지금은 별다른 신호가 없어요",
             "세 가지 지표 모두 대전 평균 범위 안에 있습니다.",
             "분기에 한 번 정도 이 화면을 열어 흐름만 확인하시면 충분합니다."))
-    if slope > 0.005:
+    if slope > 0.005 and len(cards) <= 1:
         cards.append((
-            "다만 최근에는 올라가는 중",
+            "최근에는 올라가는 중",
             "지역화폐 소비 비중이 오르는 추세입니다.",
             "늘어난 방문을 단골로 묶을 방법을 지금 준비해 두면 좋습니다."))
-    return cards
+    return cards[:2]
 
 
 # ──────────────────────────────── 화면
@@ -347,7 +347,7 @@ with t0:
             mp.loc[sel, "color"] = "#1c1c1c"
             mp.loc[sel, "size"] = mp["size"].max() * 1.3
             if HAS_FOLIUM:
-                fm = folium.Map(location=[36.345, 127.385], zoom_start=11,
+                fm = folium.Map(location=[36.345, 127.385], zoom_start=12,
                                 tiles=None, control_scale=True)
                 folium.TileLayer(
                     tiles="https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png",
@@ -363,6 +363,8 @@ with t0:
                         fill_color=rgb(r.리스크점수),
                         tooltip=f"{r.지역} {r.동} · 리스크 {r.리스크점수:.0f}점 "
                                 f"· 비중 {r.평균점유율:.2f}%").add_to(fm)
+                fm.fit_bounds([[mp["lat"].min(), mp["lon"].min()],
+                               [mp["lat"].max(), mp["lon"].max()]])
                 st_folium(fm, height=460, use_container_width=True,
                           returned_objects=[])
             else:
