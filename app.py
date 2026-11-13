@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 try:
     import folium
@@ -12,7 +13,7 @@ try:
 except Exception:
     HAS_FOLIUM = False
 
-st.set_page_config(page_title="우리 상권 지역화폐 리스크 진단",
+st.set_page_config(page_title="우리 동네 지역화폐 리스크 진단",
                    page_icon="📊", layout="wide")
 
 URL = "https://apis.data.go.kr/B190001/localGiftsPaymentV3/paymentsV3"
@@ -208,7 +209,7 @@ def advise(row, slope):
 
 
 # ──────────────────────────────── 화면
-st.title("우리 동네 지역화폐 장사 진단")
+st.title("우리 동네 지역화폐 리스크 진단")
 
 with st.sidebar:
     st.header("설정")
@@ -277,29 +278,66 @@ months = d["crtr_ym"].tolist()
 recent = share[-3:].mean()
 center, lowb, highb, slope = forecast(share, 3)
 
-# ── 머리 숫자 네 개
+# ── 머리 카드 (직접 만든 HTML)
 rank = int(stat["리스크점수"].rank(method="min", ascending=False)
            [(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0])
-n1, n2, n3, n4 = (st.container(), st.container(), st.container(),
-                  st.container()) if mobile else st.columns(4)
-n1.markdown(f"### {recent:.2f}%")
-n1.caption("대전 전체 중 우리 동네 몫")
-n2.markdown(f"### {rank}위")
-n2.caption(f"{len(stat)}개 동네 중 흔들림 순위")
-n3.markdown(f"### {row['잔존율']:.0f}%")
-n3.caption("결제 저점기에 남은 결제액")
-n4.markdown(f"### {row['최대고객층비중']:.0f}%")
-n4.caption(f"{row['최대고객층']} 손님 비중")
+trend_word = ("올라가는 중" if slope > 0.005
+              else ("내려가는 중" if slope < -0.005 else "비슷한 수준"))
+accent = {"조심": "#c0392b", "주의": "#c77700", "안심": "#157f5a"}[grade]
+soft = {"조심": "#fdeceb", "주의": "#fdf3e3", "안심": "#e9f6f0"}[grade]
+
+card = f"""
+<div style="font-family:'Noto Sans KR',system-ui,sans-serif;color:#171717;
+            border:1px solid #e6e6e6;border-radius:18px;padding:28px 30px;
+            background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+  <div style="font-size:13px;color:#8a8a8a;letter-spacing:.02em">
+    대전광역시 · {gu} · {fmt_ym(span[0])}~{fmt_ym(span[-1])}
+  </div>
+  <div style="display:flex;align-items:baseline;gap:12px;margin:6px 0 18px">
+    <span style="font-size:30px;font-weight:700;letter-spacing:-.03em">{dong}</span>
+    <span style="background:{soft};color:{accent};font-size:14px;font-weight:700;
+                 padding:5px 14px;border-radius:999px">{grade}</span>
+  </div>
+  <div style="font-size:19px;line-height:1.55;font-weight:500;margin-bottom:22px">
+    {headline(row, grade)}
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:0;border-top:1px solid #f0f0f0;
+              padding-top:18px">
+    <div style="flex:1;min-width:120px">
+      <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">우리 동네 몫</div>
+      <div style="font-size:24px;font-weight:700">{recent:.2f}<span
+           style="font-size:14px;font-weight:500">%</span></div>
+      <div style="font-size:12px;color:#8a8a8a">최근 석 달</div>
+    </div>
+    <div style="flex:1;min-width:120px">
+      <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">흔들림 순위</div>
+      <div style="font-size:24px;font-weight:700">{rank}<span
+           style="font-size:14px;font-weight:500">위</span></div>
+      <div style="font-size:12px;color:#8a8a8a">{len(stat)}개 동네 중</div>
+    </div>
+    <div style="flex:1;min-width:120px">
+      <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">저점기 잔존율</div>
+      <div style="font-size:24px;font-weight:700">{row['잔존율']:.0f}<span
+           style="font-size:14px;font-weight:500">%</span></div>
+      <div style="font-size:12px;color:#8a8a8a">한산한 달에 남는 결제</div>
+    </div>
+    <div style="flex:1;min-width:120px">
+      <div style="font-size:12px;color:#8a8a8a;margin-bottom:4px">주요 손님층</div>
+      <div style="font-size:24px;font-weight:700">{row['최대고객층']}</div>
+      <div style="font-size:12px;color:#8a8a8a">결제의 {row['최대고객층비중']:.0f}%</div>
+    </div>
+  </div>
+  <div style="margin-top:20px;padding:14px 16px;background:#fafafa;
+              border-radius:12px;font-size:14px;line-height:1.6;color:#3f3f3f">
+    이 기간 평균은 <b>{row['평균점유율']:.2f}%</b>였고 최근 석 달은
+    <b>{recent:.2f}%</b>로 {trend_word}입니다.
+    흐름이 이어진다면 석 달 뒤에는 <b>{center[-1]:.2f}%</b> 언저리가 됩니다.
+  </div>
+</div>
+"""
+components.html(card, height=330 if not mobile else 520, scrolling=False)
 
 st.write("")
-st.markdown(f"## :{color}[{grade}] · {dong}은 {headline(row, grade)}")
-
-trend_word = "올라가는 중" if slope > 0.005 else ("내려가는 중" if slope < -0.005 else "비슷한 수준")
-st.markdown(
-    f"{fmt_ym(span[0])}부터 {fmt_ym(span[-1])}까지 이 동네에서 지역화폐로 결제된 돈은 대전 전체의 "
-    f"평균 **{row['평균점유율']:.2f}%**였습니다. 최근 석 달은 **{recent:.2f}%**로 "
-    f"{trend_word}이고, 흐름이 이어진다면 석 달 뒤에는 **{center[-1]:.2f}%** 언저리가 됩니다.")
-
 st.write("")
 st.markdown("#### 우리 동네 지역화폐 소비는 이렇게 움직였습니다")
 
@@ -416,14 +454,50 @@ with t1:
              (df["crtr_ym"].isin(months[-12:]))]
     pv = sub.pivot_table(index="연령대", columns="성별",
                          values="stlm_amt", aggfunc="sum").fillna(0)
-    st.bar_chart((pv / pv.values.sum() * 100).round(1), height=320)
+    st.bar_chart((pv / pv.values.sum() * 100).round(1), height=300)
     st.caption(f"가장 큰 손님층은 {row['최대고객층']}으로 전체의 "
                f"{row['최대고객층비중']:.0f}%입니다.")
 
+    if len(months) >= 24:
+        st.markdown("##### 손님층이 어떻게 바뀌었나")
+        prev = df[(df["지역"] == gu) & (df["동"] == dong) &
+                  (df["crtr_ym"].isin(months[-24:-12]))]
+        def mix_of(frame):
+            t = frame.groupby("연령대")["stlm_amt"].sum()
+            return t / t.sum() * 100
+        now_mix, old_mix = mix_of(sub), mix_of(prev)
+        chg = pd.DataFrame({"지지난해": old_mix, "지난해": now_mix}).fillna(0)
+        chg["변화"] = (chg["지난해"] - chg["지지난해"]).round(1)
+        chg = chg.round(1).sort_index()
+        st.dataframe(chg, use_container_width=True)
+        up = chg["변화"].idxmax()
+        down = chg["변화"].idxmin()
+        st.caption(f"{up} 손님 비중이 가장 많이 늘었고({chg.loc[up, '변화']:+.1f}%p), "
+                   f"{down} 손님이 가장 많이 줄었습니다({chg.loc[down, '변화']:+.1f}%p). "
+                   "손님층이 바뀌면 잘 팔리는 메뉴와 시간대도 달라집니다.")
+
 with t2:
     st.caption("달마다 이 동네에서 지역화폐로 결제된 금액입니다. "
-               "전체가 함께 오르내리는 것은 상권이 아니라 예산 때문입니다.")
-    st.bar_chart((d.set_index("crtr_ym")["결제금액"] / 1e8).rename("억 원"), height=320)
+               "전체가 함께 오르내리는 것은 상권이 아니라 발행 규모 때문입니다.")
+    st.bar_chart((d.set_index("crtr_ym")["결제금액"] / 1e8).rename("억 원"), height=300)
+
+    st.markdown("##### 해마다 되풀이되는 달별 패턴")
+    dd = d.copy()
+    dd["월"] = dd["crtr_ym"].str[4:].astype(int)
+    years_in = dd["crtr_ym"].str[:4].nunique()
+    if years_in >= 2:
+        season = dd.groupby("월")["점유율"].mean()
+        season = (season / season.mean() * 100).round(0)
+        season.index = [f"{i}월" for i in season.index]
+        st.bar_chart(season.rename("평달을 100으로 봤을 때"), height=280,
+                     color=GREEN)
+        hi, lo = season.idxmax(), season.idxmin()
+        st.caption(f"{hi}이 가장 활발하고({season.max():.0f}) {lo}이 가장 한산합니다"
+                   f"({season.min():.0f}). 같은 달끼리 묶어 평균을 낸 값이라 "
+                   "해마다 되풀이되는 흐름을 봅니다. 재고와 인력 계획에 참고하세요.")
+    else:
+        st.caption("달별 패턴은 두 해 이상 자료가 있어야 볼 수 있습니다. "
+                   "왼쪽 설정에서 기간을 늘려 보세요.")
 
 if view_mode == "분석용":
   with t3:
