@@ -251,23 +251,30 @@ months = d["crtr_ym"].tolist()
 recent = share[-3:].mean()
 center, lowb, highb, slope = forecast(share, 3)
 
+# ── 머리 숫자 네 개
+rank = int((stat["리스크점수"] >= score).sum())
+n1, n2, n3, n4 = (st.container(), st.container(), st.container(),
+                  st.container()) if mobile else st.columns(4)
+n1.markdown(f"### {recent:.2f}%")
+n1.caption("대전 전체 중 우리 동네 몫")
+n2.markdown(f"### {rank}위")
+n2.caption(f"{len(stat)}개 동네 중 흔들림 순위")
+n3.markdown(f"### {row['잔존율']:.0f}%")
+n3.caption("예산 줄었을 때 남은 매출")
+n4.markdown(f"### {row['최대고객층비중']:.0f}%")
+n4.caption(f"{row['최대고객층']} 손님 비중")
+
+st.write("")
 st.markdown(f"## :{color}[{grade}] · {dong}은 {headline(row, grade)}")
-st.write("")
 
-if view_mode == "분석용":
-    st.caption(f"변동계수 {row['변동계수']:.3f} · 24개월 평균 비중 "
-               f"{row['평균점유율']:.2f}% · 종합 {score:.0f}점")
-
-for title, fact, action in advise(row, slope):
-    with st.container(border=True):
-        st.markdown(f"**{title}**")
-        st.markdown(fact)
-        st.caption(action)
+trend_word = "올라가는 중" if slope > 0.005 else ("내려가는 중" if slope < -0.005 else "비슷한 수준")
+st.markdown(
+    f"지난 2년 동안 이 동네에서 지역화폐로 결제된 돈은 대전 전체의 "
+    f"평균 **{row['평균점유율']:.2f}%**였습니다. 최근 석 달은 **{recent:.2f}%**로 "
+    f"{trend_word}이고, 흐름이 이어진다면 석 달 뒤에는 **{center[-1]:.2f}%** 언저리가 됩니다.")
 
 st.write("")
-st.markdown("#### 우리 동네 지역화폐 소비가 어떻게 움직였나")
-st.caption("대전 전체 지역화폐 결제액 가운데 이 동네가 차지한 몫입니다. "
-           "맨 뒤 세 칸은 지금 흐름이 이어진다면 어떻게 될지 내다본 값입니다.")
+st.markdown("#### 우리 동네 지역화폐 소비는 이렇게 움직였습니다")
 
 
 def next_ym(ym, k):
@@ -281,8 +288,31 @@ front = pd.DataFrame(index=months + fut)
 front["지금까지"] = list(share) + [np.nan] * 3
 front["앞으로 예상"] = pad + list(center)
 st.line_chart(front, height=300, color=[GREEN, "#bdbdbd"])
-st.caption(f"최근 석 달 평균 {recent:.2f}%, 석 달 뒤 예상 {center[-1]:.2f}%. "
+st.caption("금액이 아니라 대전 전체에서 차지하는 몫입니다. "
+           "금액은 예산에 따라 전 지역이 함께 오르내리기 때문입니다. "
            "예상은 지난 1년 흐름을 이어 본 값으로 평균 20% 정도 어긋납니다.")
+
+st.write("")
+st.markdown("#### 이웃과 견주면")
+gu_avg = stat[stat["지역"] == gu]["평균점유율"].mean()
+cmp = pd.DataFrame({
+    "구분": [f"{dong}", f"{gu} 평균", "대전 평균"],
+    "지역화폐 소비 몫": [f"{row['평균점유율']:.2f}%", f"{gu_avg:.2f}%",
+                  f"{stat['평균점유율'].mean():.2f}%"],
+    "예산 줄었을 때 남은 매출": [f"{row['잔존율']:.1f}%",
+                      f"{stat[stat['지역'] == gu]['잔존율'].mean():.1f}%",
+                      f"{stat['잔존율'].mean():.1f}%"],
+    "흔들림 점수": [f"{score:.0f}점",
+               f"{stat[stat['지역'] == gu]['리스크점수'].mean():.0f}점", "50점"]})
+st.dataframe(cmp, hide_index=True, use_container_width=True)
+
+st.write("")
+st.markdown("#### 지금 하면 좋을 일")
+for title, fact, action in advise(row, slope):
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        st.markdown(fact)
+        st.caption(action)
 
 st.write("")
 st.markdown("##### 더 자세히 보기")
