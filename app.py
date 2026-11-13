@@ -89,7 +89,7 @@ def build(df: pd.DataFrame, min_share: float):
     stat["평균점유율"] = shr.mean(axis=1)
     stat["변동계수"] = shr.std(axis=1) / shr.mean(axis=1)
 
-    # ① 정책 의존 — 대전 전체 결제가 가장 적었던 달들과 가장 많았던 달들을 비교
+    # ① 저점기 잔존율 — 대전 전체 결제가 가장 적었던 달들과 가장 많았던 달들을 비교
     total = m.groupby("crtr_ym")["결제금액"].sum().sort_values()
     k = max(2, len(cols) // 4)
     low_m, high_m = list(total.index[:k]), list(total.index[-k:])
@@ -147,10 +147,29 @@ def headline(row, grade):
     top = max([("정책", row["정책점수"]), ("고객층", row["집중점수"]),
                ("하락", row["추세점수"])], key=lambda x: x[1])
     if top[1] >= 60:
-        tail = {"정책": " 다만 예산 정책에는 특히 민감한 상권입니다",
+        tail = {"정책": " 특히 전체 결제가 적은 달에 많이 줄어듭니다",
                 "고객층": " 다만 손님층이 한쪽에 몰려 있는 상권입니다",
                 "하락": " 다만 최근 몇 달 계속 줄어드는 중입니다"}[top[0]]
     return body + tail
+
+
+@st.cache_data(show_spinner=False)
+def backtest(shr_values: tuple, horizon: int = 3) -> float:
+    """과거 구간에서 3개월 선행 예측을 반복해 평균 절대 오차율(MAPE)을 구한다."""
+    errs = []
+    for series in shr_values:
+        y = np.array(series)
+        if len(y) < 12:
+            continue
+        for cut in range(9, len(y) - horizon + 1):
+            train = y[max(0, cut - 12):cut]
+            x = np.arange(len(train))
+            a, b = np.polyfit(x, train, 1)
+            fx = np.arange(len(train), len(train) + horizon)
+            pred = np.clip(a * fx + b, 0.01, None)
+            actual = y[cut:cut + horizon]
+            errs.extend(np.abs(pred - actual) / actual)
+    return float(np.median(errs) * 100) if errs else float("nan")
 
 
 def advise(row, slope):
@@ -158,11 +177,11 @@ def advise(row, slope):
     cards = []
     if row["정책점수"] >= 60:
         cards.append((
-            "예산이 줄면 크게 흔들려요",
-            f"작년처럼 지역화폐 예산이 줄었을 때, 이 동네 매출은 평소의 "
-            f"{row['잔존율']:.0f}% 수준까지 떨어졌습니다.",
-            "지역화폐 비수기를 대비해 운영비 두세 달치를 따로 두세요. "
-            "할인율이나 발행 한도가 바뀐다는 시청 공지는 미리 챙겨 보시고요."))
+            "결제가 적은 달에 크게 줄어요",
+            f"대전 전체 지역화폐 결제가 가장 적었던 달, 이 동네 결제액은 "
+            f"가장 많았던 달의 {row['잔존율']:.0f}% 수준이었습니다.",
+            "지역화폐 결제가 뜸한 시기를 대비해 운영비 여유를 두세요. "
+            "할인율이나 발행 한도 공지가 뜨면 미리 챙겨 보시고요."))
     if row["집중점수"] >= 60:
         cards.append((
             "손님층이 한쪽에 몰려 있어요",
@@ -223,8 +242,11 @@ def fmt_ym(ym):
 
 
 span = sorted(m["crtr_ym"].unique())
+all_dong = df[df["동"] != "기타"].groupby(["지역", "동"]).ngroups
 st.caption(f"한국조폐공사 지역사랑상품권 결제정보 · 대전광역시 · "
-           f"{fmt_ym(span[0])} ~ {fmt_ym(span[-1])} 기준 ({len(stat)}개 행정동)")
+           f"{fmt_ym(span[0])} ~ {fmt_ym(span[-1])} 기준 · "
+           f"자료가 있는 {all_dong}개 동네 중 모든 달 기록이 있고 "
+           f"평균 비중 {min_share}% 이상인 {len(stat)}개를 분석했습니다")
 
 view_mode = st.radio("보기", ["사장님용", "분석용"], horizontal=True,
                      label_visibility="collapsed")
@@ -240,7 +262,11 @@ _d = st.session_state.get("dong")
 dong = c2.selectbox("행정동", dong_list,
                     index=dong_list.index(_d) if _d in dong_list else 0)
 
-row = stat[(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0]
+_sel = stat[(stat["지역"] == gu) & (stat["동"] == dong)]
+if _sel.empty:
+    st.warning("선택한 동네는 분석 조건에 맞는 자료가 없습니다. 다른 동네를 골라 주세요.")
+    st.stop()
+row = _sel.iloc[0]
 score = row["리스크점수"]
 grade = "조심" if score >= 66 else ("주의" if score >= 33 else "안심")
 color = {"조심": "red", "주의": "orange", "안심": "green"}[grade]
@@ -252,7 +278,8 @@ recent = share[-3:].mean()
 center, lowb, highb, slope = forecast(share, 3)
 
 # ── 머리 숫자 네 개
-rank = int((stat["리스크점수"] >= score).sum())
+rank = int(stat["리스크점수"].rank(method="min", ascending=False)
+           [(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0])
 n1, n2, n3, n4 = (st.container(), st.container(), st.container(),
                   st.container()) if mobile else st.columns(4)
 n1.markdown(f"### {recent:.2f}%")
@@ -260,7 +287,7 @@ n1.caption("대전 전체 중 우리 동네 몫")
 n2.markdown(f"### {rank}위")
 n2.caption(f"{len(stat)}개 동네 중 흔들림 순위")
 n3.markdown(f"### {row['잔존율']:.0f}%")
-n3.caption("예산 줄었을 때 남은 매출")
+n3.caption("결제 저점기에 남은 결제액")
 n4.markdown(f"### {row['최대고객층비중']:.0f}%")
 n4.caption(f"{row['최대고객층']} 손님 비중")
 
@@ -269,7 +296,7 @@ st.markdown(f"## :{color}[{grade}] · {dong}은 {headline(row, grade)}")
 
 trend_word = "올라가는 중" if slope > 0.005 else ("내려가는 중" if slope < -0.005 else "비슷한 수준")
 st.markdown(
-    f"지난 2년 동안 이 동네에서 지역화폐로 결제된 돈은 대전 전체의 "
+    f"{fmt_ym(span[0])}부터 {fmt_ym(span[-1])}까지 이 동네에서 지역화폐로 결제된 돈은 대전 전체의 "
     f"평균 **{row['평균점유율']:.2f}%**였습니다. 최근 석 달은 **{recent:.2f}%**로 "
     f"{trend_word}이고, 흐름이 이어진다면 석 달 뒤에는 **{center[-1]:.2f}%** 언저리가 됩니다.")
 
@@ -288,9 +315,15 @@ front = pd.DataFrame(index=months + fut)
 front["지금까지"] = list(share) + [np.nan] * 3
 front["앞으로 예상"] = pad + list(center)
 st.line_chart(front, height=300, color=[GREEN, "#bdbdbd"])
+mape = backtest(tuple(tuple(v) for v in
+                      m.pivot_table(index=["지역", "동"], columns="crtr_ym",
+                                    values="점유율").dropna().to_numpy()))
 st.caption("금액이 아니라 대전 전체에서 차지하는 몫입니다. "
-           "금액은 예산에 따라 전 지역이 함께 오르내리기 때문입니다. "
-           "예상은 지난 1년 흐름을 이어 본 값으로 평균 20% 정도 어긋납니다.")
+           "금액은 전 지역이 함께 오르내리기 때문입니다. "
+           + (f"예상은 지난 흐름을 그대로 이어 본 값입니다. 같은 방식으로 과거를 "
+              f"되짚어 보면 석 달 뒤 값이 실제와 중앙값 기준 {mape:.0f}% 어긋났습니다."
+              if mape == mape else
+              "예상은 지난 흐름을 그대로 이어 본 단순 추정이라 실제와 다를 수 있습니다."))
 
 st.write("")
 st.markdown("#### 이웃과 견주면")
@@ -299,11 +332,12 @@ cmp = pd.DataFrame({
     "구분": [f"{dong}", f"{gu} 평균", "대전 평균"],
     "지역화폐 소비 몫": [f"{row['평균점유율']:.2f}%", f"{gu_avg:.2f}%",
                   f"{stat['평균점유율'].mean():.2f}%"],
-    "예산 줄었을 때 남은 매출": [f"{row['잔존율']:.1f}%",
+    "저점기 잔존율": [f"{row['잔존율']:.1f}%",
                       f"{stat[stat['지역'] == gu]['잔존율'].mean():.1f}%",
                       f"{stat['잔존율'].mean():.1f}%"],
     "흔들림 점수": [f"{score:.0f}점",
-               f"{stat[stat['지역'] == gu]['리스크점수'].mean():.0f}점", "50점"]})
+               f"{stat[stat['지역'] == gu]['리스크점수'].mean():.0f}점",
+               f"{stat['리스크점수'].mean():.0f}점"]})
 st.dataframe(cmp, hide_index=True, use_container_width=True)
 
 st.write("")
@@ -408,7 +442,7 @@ if view_mode == "분석용":
     st.markdown("##### 이 동네의 세 가지 지표")
     g1, g2, g3 = st.columns(3)
     for col, label, val, note in [
-            (g1, "정책 의존", row["정책점수"], f"예산 저점기 잔존율 {row['잔존율']:.1f}%"),
+            (g1, "저점기 잔존율", row["정책점수"], f"결제 저점기 잔존율 {row['잔존율']:.1f}%"),
             (g2, "손님층 집중", row["집중점수"],
              f"{row['최대고객층']} {row['최대고객층비중']:.0f}%"),
             (g3, "하락 지속", row["추세점수"],
@@ -417,7 +451,7 @@ if view_mode == "분석용":
         col.progress(min(int(val), 100))
         col.caption(note)
     st.caption(f"변동계수 {row['변동계수']:.3f} · 24개월 평균 비중 {row['평균점유율']:.2f}% · "
-               f"종합 {score:.0f}점 (정책 40% + 집중 30% + 하락 30%)")
+               f"종합 {score:.0f}점 (잔존율 40% + 집중 30% + 하락 30%, 탐색적 가중치)")
 
     st.markdown("##### 대전 전체 순위")
     view = stat.copy()
@@ -437,17 +471,17 @@ if view_mode == "분석용":
 
 | 지표 | 가중치 | 무엇을 재나 |
 | --- | --- | --- |
-| 정책 의존 | 40% | 대전 전체 결제가 가장 적었던 달의 매출이, 가장 많았던 달의 몇 %인지(잔존율). 낮을수록 예산에 따라 크게 흔들린다 |
+| 저점기 잔존율 | 40% | 대전 전체 결제가 가장 적었던 달의 결제액이, 가장 많았던 달의 몇 %인지. 낮을수록 전체 흐름에 크게 휩쓸린다. 저점의 원인이 정책인지는 이 지표만으로 확인되지 않는다 |
 | 고객층 집중 | 30% | 성별 × 연령대 결제액의 허핀달 지수. 한 집단에 쏠릴수록 그 집단의 소비가 줄 때 타격이 크다 |
 | 하락 지속 | 30% | 최근 6개월 중 전월보다 낮았던 달 수와 3개월 추세 |
 
-세 지표를 대전 77개 동 안에서 순위로 환산해 0~100점으로 만들고 가중 합산합니다.
+세 지표를 분석 대상 동네 안에서 순위로 환산해 0~100점으로 만들고 가중 합산합니다. 가중치는 검증된 값이 아니라 탐색적으로 정한 설계값입니다.
 
 **무엇을 보여주지 못하나**
 
 - 상권 전체 매출이 아닙니다. 카드 · 현금 · 간편결제는 포함되지 않습니다.
 - 개별 점포가 아니라 행정동 단위입니다.
-- 폐업 위험을 예측하지 않습니다. 대전 일반음식점 63,889건의 폐업률과 대조한 결과
+- 폐업 위험을 예측하지 않습니다. 대전 일반음식점 63,889건(별도 분석)의 폐업률과 대조한 결과
   유의미한 상관이 없었습니다(r=0.06, p=0.65). 시차를 둔 비교와 개업 대비 폐업 배율로도
   마찬가지였습니다. 따라서 **매출이 흔들릴 가능성**을 보는 지표로 한정합니다.
 
