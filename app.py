@@ -221,18 +221,27 @@ def ai_summary(payload: dict) -> str:
         "- 전문용어(변동계수, 점유율, 허핀달) 대신 쉬운 말로 풀어 써라.\n"
         "- 과장하거나 겁주지 말고, 담담하게 사실과 할 일을 말해라.\n"
         "- 각 문단은 세 문장 이내. 머리말이나 맺음말 없이 본문만.\n")
-    try:
-        res = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.5-flash:generateContent",
-            headers={"x-goog-api-key": key, "Content-Type": "application/json"},
-            json={"contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"temperature": 0.4, "maxOutputTokens": 600}},
-            timeout=30)
-        res.raise_for_status()
-        return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        return f"__ERROR__{e}"
+    # gemini-2.5-flash는 신규 키에서 막혀서 최신 별칭을 쓰고, 혼잡하면 다음 모델로 넘어간다
+    last_err = ""
+    for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
+        try:
+            res = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent",
+                headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1500}},
+                timeout=40)
+            res.raise_for_status()
+            parts = res.json()["candidates"][0]["content"]["parts"]
+            text = "".join(pt.get("text", "") for pt in parts
+                           if not pt.get("thought")).strip()
+            if text:
+                return text
+            last_err = "빈 응답"
+        except Exception as e:
+            last_err = str(e)
+    return f"__ERROR__{last_err}"
 
 
 def advise(row, slope):
