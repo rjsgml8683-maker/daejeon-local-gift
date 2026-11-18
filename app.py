@@ -26,33 +26,29 @@ W_POLICY, W_MIX, W_TREND = 0.4, 0.3, 0.3   # 가중치
 
 
 # ──────────────────────────────── 데이터
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def load(start_ym: str, end_ym: str) -> pd.DataFrame:
-    key = st.secrets["SERVICE_KEY"]
-    rows, bar = [], st.progress(
-        0.0, text="공공데이터포털에서 결제 데이터를 받는 중입니다. 처음 접속 시 1분 정도 걸립니다…")
+CACHE_FILE = "payments_cache.csv.gz"   # 공공데이터포털이 해외 서버(Streamlit)를 막을 때 쓰는 사본
+
+
+def _fetch_api(key: str, start_ym: str, end_ym: str, bar):
+    """공공데이터포털에서 받는다. 막히거나 JSON이 아니면 None."""
+    rows = []
     for n, (code, name) in enumerate(REGIONS.items(), start=1):
         page = 1
         while True:
             payload = None
-            for attempt in range(4):   # 공공데이터포털이 가끔 빈 응답을 줘서 재시도
+            for attempt in range(2):
                 try:
                     res = requests.get(URL, params={
                         "serviceKey": key, "page": page, "perPage": 1000,
                         "cond[usage_rgn_cd::EQ]": code,
                         "cond[crtr_ym::GTE]": start_ym, "cond[crtr_ym::LTE]": end_ym,
-                        "returnType": "JSON"}, timeout=60)
+                        "returnType": "JSON"}, timeout=30)
                     payload = res.json()
                     break
                 except Exception:
-                    time.sleep(2 * (attempt + 1))
+                    time.sleep(1.5)
             if payload is None:
-                body = (res.text or "(빈 응답)")[:300] if "res" in locals() else "(응답 없음)"
-                bar.empty()
-                st.error(f"공공데이터포털 응답을 읽지 못했습니다 ({name}, {page}쪽, "
-                         f"HTTP {getattr(res, 'status_code', '?')}). 잠시 뒤 새로고침해 주세요.")
-                st.code(body)
-                st.stop()
+                return None
             batch = payload.get("data", [])
             rows += batch
             if len(batch) < 1000:
@@ -60,7 +56,25 @@ def load(start_ym: str, end_ym: str) -> pd.DataFrame:
             page += 1
             time.sleep(0.2)
         bar.progress(n / len(REGIONS), text=f"{name} 수집 완료 ({len(rows):,}건)")
+    return rows
+
+
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def load(start_ym: str, end_ym: str) -> pd.DataFrame:
+    key = st.secrets["SERVICE_KEY"]
+    bar = st.progress(
+        0.0, text="공공데이터포털에서 결제 데이터를 받는 중입니다. 처음 접속 시 1분 정도 걸립니다…")
+    rows = _fetch_api(key, start_ym, end_ym, bar)
     bar.empty()
+    if rows is None:
+        # 해외 IP 차단 등으로 API가 안 될 때: 한국에서 미리 받아 둔 같은 API 자료를 쓴다
+        try:
+            cache = pd.read_csv(CACHE_FILE, dtype=str)
+        except Exception:
+            return pd.DataFrame()
+        cache = cache[(cache["crtr_ym"] >= start_ym) & (cache["crtr_ym"] <= end_ym)]
+        cache = cache.astype(object).where(cache.notna(), None)
+        rows = cache.to_dict("records")
 
     df = pd.DataFrame(rows)
     if df.empty:
