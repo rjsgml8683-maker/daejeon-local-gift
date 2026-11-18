@@ -125,7 +125,38 @@ def build(df: pd.DataFrame, min_share: float):
     stat["리스크점수"] = (stat["정책점수"] * W_POLICY +
                      stat["집중점수"] * W_MIX +
                      stat["추세점수"] * W_TREND)
-    return m, stat.reset_index().sort_values("리스크점수", ascending=False), low_m, high_m
+
+    # ④ 상권 유형 — 네 가지 성격으로 묶기 (k-means)
+    mon = pd.Series([int(c[4:]) for c in cols], index=cols)
+    seas = shr.T.groupby(mon).mean().T
+    stat["계절진폭"] = (seas.max(axis=1) - seas.min(axis=1)) / seas.mean(axis=1)
+
+    feat = stat[["평균점유율", "변동계수", "잔존율", "계절진폭"]]
+    sim = pd.DataFrame(index=stat.index, columns=stat.index, dtype=float)
+    stat["유형"] = "분류 안 됨"
+    if len(feat) >= 8:
+        from sklearn.cluster import KMeans
+        from sklearn.preprocessing import StandardScaler
+        # 극단값이 군집을 독차지하지 않도록 순위로 바꾼 뒤 표준화
+        X = StandardScaler().fit_transform(feat.rank(pct=True))
+        labels = KMeans(n_clusters=4, n_init=10, random_state=0).fit_predict(X)
+        stat["군집"] = labels
+
+        big = stat.groupby("군집")["평균점유율"].mean()
+        shake = stat.groupby("군집")["변동계수"].mean()
+        names = {}
+        for c in big.index:
+            a = "큰" if big[c] >= big.median() else "작은"
+            b = "출렁이는" if shake[c] >= shake.median() else "꾸준한"
+            names[c] = f"{a} 상권 · {b} 흐름"
+        stat["유형"] = stat["군집"].map(names)
+
+        d = np.linalg.norm(X[:, None, :] - X[None, :, :], axis=2)
+        sim = pd.DataFrame((1 - d / d.max()) * 100,
+                           index=stat.index, columns=stat.index)
+
+    out = stat.reset_index().sort_values("리스크점수", ascending=False)
+    return m, out, low_m, high_m, sim
 
 
 # ──────────────────────────────── 예측
@@ -171,6 +202,37 @@ def backtest(shr_values: tuple, horizon: int = 3) -> float:
             actual = y[cut:cut + horizon]
             errs.extend(np.abs(pred - actual) / actual)
     return float(np.median(errs) * 100) if errs else float("nan")
+
+
+def ai_summary(payload: dict) -> str:
+    """Gemini에 수치를 넘겨 사장님께 드리는 말로 바꿔 받는다."""
+    key = st.secrets.get("GEMINI_API_KEY", "")
+    if not key:
+        return ""
+    lines = "\n".join(f"- {k}: {v}" for k, v in payload.items())
+    prompt = (
+        "너는 공공데이터로 상권을 분석해 소상공인에게 알려주는 도우미다.\n"
+        "아래는 한 동네의 지역사랑상품권 결제 분석 결과다. 이 수치만 가지고 "
+        "가게 사장님께 말하듯 세 문단으로 정리해라.\n\n"
+        f"{lines}\n\n"
+        "규칙:\n"
+        "- 주어진 수치 밖의 사실을 만들지 마라. 특히 원인을 단정하지 마라.\n"
+        "- '예산 때문에', '정책 탓에' 같은 인과는 쓰지 마라. 자료로 확인되지 않았다.\n"
+        "- 전문용어(변동계수, 점유율, 허핀달) 대신 쉬운 말로 풀어 써라.\n"
+        "- 과장하거나 겁주지 말고, 담담하게 사실과 할 일을 말해라.\n"
+        "- 각 문단은 세 문장 이내. 머리말이나 맺음말 없이 본문만.\n")
+    try:
+        res = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash:generateContent",
+            headers={"x-goog-api-key": key, "Content-Type": "application/json"},
+            json={"contents": [{"parts": [{"text": prompt}]}],
+                  "generationConfig": {"temperature": 0.4, "maxOutputTokens": 600}},
+            timeout=30)
+        res.raise_for_status()
+        return res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        return f"__ERROR__{e}"
 
 
 def advise(row, slope):
@@ -236,7 +298,7 @@ if df.empty:
     st.warning("해당 기간에 데이터가 없습니다. 기간을 바꿔보세요.")
     st.stop()
 
-m, stat, low_m, high_m = build(df, min_share)
+m, stat, low_m, high_m, sim = build(df, min_share)
 
 
 def fmt_ym(ym):
@@ -389,19 +451,97 @@ for title, fact, action in advise(row, slope):
         st.markdown(fact)
         st.caption(action)
 
+if st.secrets.get("GEMINI_API_KEY", ""):
+    st.write("")
+    if st.button("AI가 풀어서 설명해 주기", use_container_width=True):
+        near_txt = "없음"
+        if not sim.empty and (gu, dong) in sim.index:
+            nb = sim.loc[(gu, dong)].drop(index=(gu, dong)).sort_values(
+                ascending=False).head(3)
+            info2 = stat.set_index(["지역", "동"])
+            near_txt = ", ".join(
+                f"{a} {b}(최근 {info2.loc[(a, b), '최근추세']:+.0f}%)"
+                for a, b in nb.index)
+        dd = d.copy()
+        dd["월"] = dd["crtr_ym"].str[4:].astype(int)
+        sidx = dd.groupby("월")["점유율"].mean()
+        sidx = (sidx / sidx.mean() * 100).round(0)
+        with st.spinner("문장을 쓰는 중입니다. 10초쯤 걸립니다…"):
+            text = ai_summary({
+                "동네": f"{gu} {dong}",
+                "상권 유형": row["유형"],
+                "대전 전체 중 소비 몫": f"{recent:.2f}% (24개월 평균 {row['평균점유율']:.2f}%)",
+                "흔들림 순위": f"{len(stat)}곳 중 {rank}위",
+                "저점기 잔존율": f"{row['잔존율']:.1f}% (대전 평균 {stat['잔존율'].mean():.1f}%)",
+                "주요 손님층": f"{row['최대고객층']} {row['최대고객층비중']:.0f}%",
+                "최근 3개월 추세": f"{row['최근추세']:+.1f}%",
+                "석 달 뒤 예상": f"{center[-1]:.2f}%",
+                "가장 활발한 달": f"{sidx.idxmax()}월 (지수 {sidx.max():.0f})",
+                "가장 한산한 달": f"{sidx.idxmin()}월 (지수 {sidx.min():.0f})",
+                "닮은 동네 최근 흐름": near_txt})
+        if not text:
+            st.info("AI 설명 기능이 설정되어 있지 않습니다.")
+        elif text.startswith("__ERROR__"):
+            st.warning("지금은 설명을 받아오지 못했습니다. 잠시 뒤 다시 눌러 보세요.")
+        else:
+            with st.container(border=True):
+                st.markdown(text)
+                st.caption("위 수치를 바탕으로 AI가 쓴 문장입니다. "
+                           "숫자는 분석 결과이고, 문장 표현만 AI가 맡았습니다.")
+
 st.write("")
 st.markdown("##### 더 자세히 보기")
 
 if view_mode == "사장님용":
-    names = ["우리 동네 위치", "누가 쓰나", "달마다 얼마나"]
+    names = ["닮은 동네", "우리 동네 위치", "누가 쓰나", "달마다 얼마나"]
 else:
-    names = ["우리 동네 위치", "누가 쓰나", "달마다 얼마나",
+    names = ["닮은 동네", "우리 동네 위치", "누가 쓰나", "달마다 얼마나",
              "다른 동네와 비교", "분석 방법", "이 진단의 한계"]
 tabs = st.tabs(names)
-t0, t1, t2 = tabs[0], tabs[1], tabs[2]
-t3 = tabs[3] if len(tabs) > 3 else st.empty()
-t4 = tabs[4] if len(tabs) > 4 else st.empty()
-t5 = tabs[5] if len(tabs) > 5 else st.empty()
+tw, t0, t1, t2 = tabs[0], tabs[1], tabs[2], tabs[3]
+t3 = tabs[4] if len(tabs) > 4 else st.empty()
+t4 = tabs[5] if len(tabs) > 5 else st.empty()
+t5 = tabs[6] if len(tabs) > 6 else st.empty()
+
+with tw:
+    key = (gu, dong)
+    if sim.empty or key not in sim.index:
+        st.info("닮은 동네를 찾으려면 분석 대상이 여덟 곳 이상이어야 합니다. "
+                "왼쪽 설정에서 최소 비중을 낮춰 보세요.")
+    else:
+        st.caption("소비 규모, 흔들림, 저점기 잔존율, 계절 흐름 네 가지가 닮은 동네를 "
+                   "찾았습니다. 수치가 가까울수록 닮음 정도가 높습니다.")
+        near = sim.loc[key].drop(index=key).sort_values(ascending=False).head(3)
+        info = stat.set_index(["지역", "동"])
+        for (sgu, sdong), pct in near.items():
+            r2 = info.loc[(sgu, sdong)]
+            move = ("올라가는 중" if r2["최근추세"] > 3
+                    else ("내려가는 중" if r2["최근추세"] < -3 else "비슷한 수준"))
+            with st.container(border=True):
+                c_a, c_b = st.columns([3, 1])
+                c_a.markdown(f"**{sgu} {sdong}**")
+                c_a.caption(f"소비 몫 {r2['평균점유율']:.2f}% · 잔존율 "
+                            f"{r2['잔존율']:.1f}% · 최근 {move}")
+                c_b.markdown(f"### {pct:.0f}%")
+                c_b.caption("닮음")
+
+        ups = sum(1 for k2 in near.index if info.loc[k2, "최근추세"] > 3)
+        me_up = row["최근추세"] > 3
+        if ups >= 2 and not me_up:
+            st.warning(f"닮은 세 곳 중 {ups}곳은 최근 올라가는 중인데 "
+                       f"{dong}만 그렇지 않습니다. 동네 사정이 아니라 "
+                       "우리 상권만의 변화일 수 있습니다.")
+        elif ups == 0 and not me_up:
+            st.info("닮은 동네들도 함께 내려가는 중입니다. "
+                    "우리 가게만의 문제가 아닐 수 있습니다.")
+
+        st.write("")
+        st.markdown("##### 대전 상권을 네 유형으로 묶으면")
+        st.caption(f"{dong}은 **{row['유형']}** 유형입니다.")
+        tp = (stat.groupby("유형")
+              .agg(동네수=("동", "count"), 평균소비몫=("평균점유율", "mean"),
+                   평균흔들림=("변동계수", "mean")).round(2).reset_index())
+        st.dataframe(tp, hide_index=True, use_container_width=True)
 
 with t0:
     coords = load_coords()
@@ -551,6 +691,14 @@ if view_mode == "분석용":
 | 저점기 잔존율 | 40% | 대전 전체 결제가 가장 적었던 달의 결제액이, 가장 많았던 달의 몇 %인지. 낮을수록 전체 흐름에 크게 휩쓸린다. 저점의 원인이 정책인지는 이 지표만으로 확인되지 않는다 |
 | 고객층 집중 | 30% | 성별 × 연령대 결제액의 허핀달 지수. 한 집단에 쏠릴수록 그 집단의 소비가 줄 때 타격이 크다 |
 | 하락 지속 | 30% | 최근 6개월 중 전월보다 낮았던 달 수와 3개월 추세 |
+
+**상권 유형 분류**
+
+소비 규모 · 흔들림 · 저점기 잔존율 · 계절 진폭 네 값을 순위로 바꿔 표준화한 뒤
+k-means 군집 분석으로 네 유형으로 묶었습니다. 순위로 바꾸는 이유는 한두 곳의
+극단값이 군집을 독차지하는 것을 막기 위해서입니다. 유형 이름은 각 묶음의 평균값을
+보고 붙인 것으로, 알고리즘이 지은 것이 아닙니다. '닮은 동네'의 닮음 정도는 같은
+네 값 사이의 거리를 0~100으로 환산한 값입니다.
 
 세 지표를 분석 대상 동네 안에서 순위로 환산해 0~100점으로 만들고 가중 합산합니다. 가중치는 검증된 값이 아니라 탐색적으로 정한 설계값입니다.
 
