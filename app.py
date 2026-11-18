@@ -169,13 +169,12 @@ def build(df: pd.DataFrame, min_share: float):
         labels = KMeans(n_clusters=4, n_init=10, random_state=0).fit_predict(X)
         stat["군집"] = labels
 
-        big = stat.groupby("군집")["평균점유율"].mean()
-        shake = stat.groupby("군집")["변동계수"].mean()
-        names = {}
-        for c in big.index:
-            a = "큰" if big[c] >= big.median() else "작은"
-            b = "출렁이는" if shake[c] >= shake.median() else "꾸준한"
-            names[c] = f"{a} 상권 · {b} 흐름"
+        # 묶음별 평균 흔들림 순서대로 이름을 붙인다
+        shake = stat.groupby("군집")["변동계수"].mean().sort_values()
+        tiers = ["가장 꾸준한 상권", "대체로 안정적인 상권",
+                 "자주 흔들리는 상권", "크게 출렁이는 상권"]
+        names = {c: tiers[i] if i < len(tiers) else f"유형 {i + 1}"
+                 for i, c in enumerate(shake.index)}
         stat["유형"] = stat["군집"].map(names)
 
         d = np.linalg.norm(X[:, None, :] - X[None, :, :], axis=2)
@@ -197,19 +196,30 @@ def forecast(series: np.ndarray, months: int = 3):
     return center, np.clip(center - 1.96 * sigma, 0.01, None), center + 1.96 * sigma, slope
 
 
-def headline(row, grade):
+def flags(row, slope):
+    """한 줄 진단과 제안 카드가 같은 기준을 쓰도록 신호를 한곳에서 판정한다."""
+    return {
+        "정책": row["정책점수"] >= 60,
+        "집중": row["집중점수"] >= 60,
+        "하락": row["추세점수"] >= 60 or row["하락개월"] >= 4 or row["최근추세"] < -5,
+        "상승": slope > 0.005 and row["최근추세"] > 3,
+    }
+
+
+def headline(row, grade, sig):
     """한 줄 진단 문장."""
     body = {"안심": "지역화폐 매출이 꾸준한 편입니다",
             "주의": "지역화폐 매출이 때때로 흔들리는 편입니다",
             "조심": "지역화폐 매출이 크게 흔들리는 편입니다"}[grade]
-    tail = ""
-    top = max([("정책", row["정책점수"]), ("고객층", row["집중점수"]),
-               ("하락", row["추세점수"])], key=lambda x: x[1])
-    if top[1] >= 60:
-        tail = {"정책": " 특히 전체 결제가 적은 달에 많이 줄어듭니다",
-                "고객층": " 다만 손님층이 한쪽에 몰려 있는 상권입니다",
-                "하락": " 다만 최근 몇 달 계속 줄어드는 중입니다"}[top[0]]
-    return body + tail
+    if sig["하락"]:
+        return body + " 그리고 최근 몇 달 줄어드는 중입니다"
+    if sig["정책"]:
+        return body + " 특히 전체 결제가 적은 달에 많이 줄어듭니다"
+    if sig["집중"]:
+        return body + " 손님층이 한쪽에 몰려 있습니다"
+    if sig["상승"]:
+        return body + " 최근에는 올라가는 중입니다"
+    return body
 
 
 @st.cache_data(show_spinner=False)
@@ -242,8 +252,16 @@ def ai_summary(payload: dict) -> str:
         "아래는 한 동네의 지역사랑상품권 결제 분석 결과다. 이 수치만 가지고 "
         "가게 사장님께 말하듯 세 문단으로 정리해라.\n\n"
         f"{lines}\n\n"
+        "지표의 뜻 (반드시 이대로 이해할 것):\n"
+        "- 소비 몫: 대전 전체 지역화폐 결제액 중 이 동네가 차지한 비율. "
+        "가게 수나 매출액이 아니라 결제 금액의 비율이다.\n"
+        "- 저점기 잔존율: 대전 전체 결제가 가장 적었던 달의 이 동네 결제액이, "
+        "가장 많았던 달의 몇 퍼센트였는지. 살아남은 가게 비율이 절대 아니다.\n"
+        "- 흔들림 순위: 달마다 소비 몫이 얼마나 출렁였는지의 순위. 1위가 가장 심하다.\n"
+        "- 상권 유형: 비슷한 성격끼리 묶은 분류 이름일 뿐, 등급이 아니다.\n\n"
         "규칙:\n"
         "- 주어진 수치 밖의 사실을 만들지 마라. 특히 원인을 단정하지 마라.\n"
+        "- 지표를 매출액이나 가게 수로 바꿔 말하지 마라.\n"
         "- '예산 때문에', '정책 탓에' 같은 인과는 쓰지 마라. 자료로 확인되지 않았다.\n"
         "- 전문용어(변동계수, 점유율, 허핀달) 대신 쉬운 말로 풀어 써라.\n"
         "- 과장하거나 겁주지 말고, 담담하게 사실과 할 일을 말해라.\n"
@@ -271,38 +289,39 @@ def ai_summary(payload: dict) -> str:
     return f"__ERROR__{last_err}"
 
 
-def advise(row, slope):
-    """가장 두드러진 한 가지를 중심으로 제안한다."""
+def advise(row, sig):
+    """판정된 신호에 따라 할 일을 제안한다."""
     cards = []
-    if row["정책점수"] >= 60:
+    if sig["정책"]:
         cards.append((
             "결제가 적은 달에 크게 줄어요",
             f"대전 전체 지역화폐 결제가 가장 적었던 달, 이 동네 결제액은 "
             f"가장 많았던 달의 {row['잔존율']:.0f}% 수준이었습니다.",
             "지역화폐 결제가 뜸한 시기를 대비해 운영비 여유를 두세요. "
             "할인율이나 발행 한도 공지가 뜨면 미리 챙겨 보시고요."))
-    if row["집중점수"] >= 60:
+    if sig["집중"]:
         cards.append((
             "손님층이 한쪽에 몰려 있어요",
             f"결제의 {row['최대고객층비중']:.0f}%가 {row['최대고객층']} 손님입니다.",
             "이 손님들이 줄면 타격이 큽니다. 다른 연령대가 찾을 만한 메뉴나 "
             "시간대를 하나쯤 만들어 두면 완충이 됩니다."))
-    if row["하락개월"] >= 4 or row["최근추세"] < -10:
+    if sig["하락"]:
         cards.append((
-            "최근 계속 줄고 있어요",
-            f"최근 6개월 중 {int(row['하락개월'])}개월이 전달보다 낮았습니다.",
+            "최근 줄어드는 중이에요",
+            f"최근 석 달이 직전 석 달보다 {abs(row['최근추세']):.1f}% 낮고, "
+            f"6개월 중 {int(row['하락개월'])}개월이 전달보다 낮았습니다.",
             "가까운 동네로 손님이 옮겨가고 있는지 확인해 보세요. "
-            "비교 탭에서 이웃 상권과 나란히 볼 수 있습니다."))
+            "'닮은 동네' 탭에서 비슷한 상권의 흐름과 견줘 볼 수 있습니다."))
+    if sig["상승"] and len(cards) <= 1:
+        cards.append((
+            "최근에는 올라가는 중",
+            f"최근 석 달이 직전 석 달보다 {row['최근추세']:.1f}% 높습니다.",
+            "늘어난 방문을 단골로 묶을 방법을 지금 준비해 두면 좋습니다."))
     if not cards:
         cards.append((
             "지금은 별다른 신호가 없어요",
             "세 가지 지표 모두 대전 평균 범위 안에 있습니다.",
             "분기에 한 번 정도 이 화면을 열어 흐름만 확인하시면 충분합니다."))
-    if slope > 0.005 and len(cards) <= 1:
-        cards.append((
-            "최근에는 올라가는 중",
-            "지역화폐 소비 비중이 오르는 추세입니다.",
-            "늘어난 방문을 단골로 묶을 방법을 지금 준비해 두면 좋습니다."))
     return cards[:2]
 
 
@@ -315,7 +334,7 @@ with st.sidebar:
                        help="PC나 태블릿에서 보실 때 켜면 가로로 넓게 배치됩니다")
     mobile = not wide
     with st.expander("분석 조건 (전문가용)"):
-        years = st.slider("분석 기간 (연월)", 2023, 2026, (2024, 2025))
+        years = st.slider("분석 기간 (연월)", 2023, 2026, (2024, 2026))
         min_share = st.number_input("최소 평균 비중 (%)", 0.0, 5.0, 0.3, 0.1)
         if st.button("가양동 · 가오동 불러오기", use_container_width=True):
             st.session_state.update(gu="동구", dong="가양동",
@@ -379,6 +398,8 @@ months = d["crtr_ym"].tolist()
 recent = share[-3:].mean()
 center, lowb, highb, slope = forecast(share, 3)
 
+sig = flags(row, slope)
+
 # ── 머리 카드 (직접 만든 HTML)
 rank = int(stat["리스크점수"].rank(method="min", ascending=False)
            [(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0])
@@ -400,7 +421,7 @@ card = f"""
                  padding:5px 14px;border-radius:999px">{grade}</span>
   </div>
   <div style="font-size:19px;line-height:1.55;font-weight:500;margin-bottom:22px">
-    {headline(row, grade)}
+    {headline(row, grade, sig)}
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
               gap:16px;border-top:1px solid #f0f0f0;padding-top:18px">
@@ -481,7 +502,7 @@ st.dataframe(cmp, hide_index=True, use_container_width=True)
 
 st.write("")
 st.markdown("#### 지금 하면 좋을 일")
-for title, fact, action in advise(row, slope):
+for title, fact, action in advise(row, sig):
     with st.container(border=True):
         st.markdown(f"**{title}**")
         st.markdown(fact)
@@ -506,7 +527,7 @@ if st.secrets.get("GEMINI_API_KEY", ""):
             text = ai_summary({
                 "동네": f"{gu} {dong}",
                 "상권 유형": row["유형"],
-                "대전 전체 중 소비 몫": f"{recent:.2f}% (24개월 평균 {row['평균점유율']:.2f}%)",
+                "대전 전체 중 소비 몫": f"{recent:.2f}% (기간 평균 {row['평균점유율']:.2f}%)",
                 "흔들림 순위": f"{len(stat)}곳 중 {rank}위",
                 "저점기 잔존율": f"{row['잔존율']:.1f}% (대전 평균 {stat['잔존율'].mean():.1f}%)",
                 "주요 손님층": f"{row['최대고객층']} {row['최대고객층비중']:.0f}%",
@@ -576,8 +597,12 @@ with tw:
         st.caption(f"{dong}은 **{row['유형']}** 유형입니다.")
         tp = (stat.groupby("유형")
               .agg(동네수=("동", "count"), 평균소비몫=("평균점유율", "mean"),
-                   평균흔들림=("변동계수", "mean")).round(2).reset_index())
+                   평균흔들림=("변동계수", "mean"))
+              .sort_values("평균흔들림").round(2).reset_index())
         st.dataframe(tp, hide_index=True, use_container_width=True)
+        st.caption("흔들림이 적은 순서입니다. 네 가지 수치(소비 규모 · 흔들림 · "
+                   "저점기 잔존율 · 계절 흐름)로 묶은 뒤, 묶음별 평균 흔들림에 따라 "
+                   "이름을 붙였습니다.")
 
 with t0:
     coords = load_coords()
@@ -703,7 +728,7 @@ if view_mode == "분석용":
         col.markdown(f"**{label}** {val:.0f}점")
         col.progress(min(int(val), 100))
         col.caption(note)
-    st.caption(f"변동계수 {row['변동계수']:.3f} · 24개월 평균 비중 {row['평균점유율']:.2f}% · "
+    st.caption(f"변동계수 {row['변동계수']:.3f} · 기간 평균 비중 {row['평균점유율']:.2f}% · "
                f"종합 {score:.0f}점 (잔존율 40% + 집중 30% + 하락 30%, 탐색적 가중치)")
 
     st.markdown("##### 대전 전체 순위")
@@ -732,7 +757,7 @@ if view_mode == "분석용":
 
 소비 규모 · 흔들림 · 저점기 잔존율 · 계절 진폭 네 값을 순위로 바꿔 표준화한 뒤
 k-means 군집 분석으로 네 유형으로 묶었습니다. 순위로 바꾸는 이유는 한두 곳의
-극단값이 군집을 독차지하는 것을 막기 위해서입니다. 유형 이름은 각 묶음의 평균값을
+극단값이 군집을 독차지하는 것을 막기 위해서입니다. 유형 이름은 묶음별 평균 흔들림 순서를
 보고 붙인 것으로, 알고리즘이 지은 것이 아닙니다. '닮은 동네'의 닮음 정도는 같은
 네 값 사이의 거리를 0~100으로 환산한 값입니다.
 
