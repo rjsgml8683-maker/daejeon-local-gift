@@ -34,13 +34,26 @@ def load(start_ym: str, end_ym: str) -> pd.DataFrame:
     for n, (code, name) in enumerate(REGIONS.items(), start=1):
         page = 1
         while True:
-            res = requests.get(URL, params={
-                "serviceKey": key, "page": page, "perPage": 1000,
-                "cond[usage_rgn_cd::EQ]": code,
-                "cond[crtr_ym::GTE]": start_ym, "cond[crtr_ym::LTE]": end_ym,
-                "returnType": "JSON"}, timeout=60)
-            res.raise_for_status()
-            batch = res.json().get("data", [])
+            payload = None
+            for attempt in range(4):   # 공공데이터포털이 가끔 빈 응답을 줘서 재시도
+                try:
+                    res = requests.get(URL, params={
+                        "serviceKey": key, "page": page, "perPage": 1000,
+                        "cond[usage_rgn_cd::EQ]": code,
+                        "cond[crtr_ym::GTE]": start_ym, "cond[crtr_ym::LTE]": end_ym,
+                        "returnType": "JSON"}, timeout=60)
+                    payload = res.json()
+                    break
+                except Exception:
+                    time.sleep(2 * (attempt + 1))
+            if payload is None:
+                body = (res.text or "(빈 응답)")[:300] if "res" in locals() else "(응답 없음)"
+                bar.empty()
+                st.error(f"공공데이터포털 응답을 읽지 못했습니다 ({name}, {page}쪽, "
+                         f"HTTP {getattr(res, 'status_code', '?')}). 잠시 뒤 새로고침해 주세요.")
+                st.code(body)
+                st.stop()
+            batch = payload.get("data", [])
             rows += batch
             if len(batch) < 1000:
                 break
