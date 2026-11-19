@@ -880,12 +880,13 @@ if st.secrets.get("GEMINI_API_KEY", ""):
         else:   # 꼬리표가 안 붙어 오면 통째로 보여 준다
             head, rest = text, []
         # 항목이 홀수면 마지막 한 장이 반쪽으로 남으므로 한 줄을 다 쓰게 한다
+        WIDE = ' style="grid-column:1 / -1"'
         boxes = ""
         for i, (k, v) in enumerate(rest):
             alone = len(rest) % 2 == 1 and i == len(rest) - 1
-            boxes += (f'<div class="box {LABELS.get(k, ("", ""))[0]}"'
-                      f'{" style=\"grid-column:1 / -1\"" if alone else ""}>'
-                      f'<b>{k}</b><p>{v}</p></div>')
+            tone = LABELS.get(k, ("", ""))[0]
+            span = WIDE if alone else ""
+            boxes += f'<div class="box {tone}"{span}><b>{k}</b><p>{v}</p></div>'
         html(f"""
 <div class="ai">
   <div class="head">
