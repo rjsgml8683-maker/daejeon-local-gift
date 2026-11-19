@@ -209,8 +209,8 @@ def flags(row, slope):
 def headline(row, grade, sig):
     """한 줄 진단 문장."""
     body = {"안심": "지역화폐 매출이 꾸준한 편입니다",
-            "주의": "지역화폐 매출이 때때로 흔들리는 편입니다",
-            "조심": "지역화폐 매출이 크게 흔들리는 편입니다"}[grade]
+            "보통": "지역화폐 매출이 때때로 흔들리는 편입니다",
+            "주의": "지역화폐 매출이 크게 흔들리는 편입니다"}[grade]
     if sig["하락"]:
         return body + ". 게다가 최근 몇 달 줄어드는 중입니다"
     if sig["정책"]:
@@ -461,6 +461,7 @@ header[data-testid="stHeader"]{
 }
 .badge{font-size:13px; font-weight:700; padding:4px 12px; border-radius:999px}
 .badge.ok{color:var(--ok); background:var(--ok-bg)}
+.badge.mid{color:#475569; background:#F1F5F9}
 .badge.warn{color:var(--warn); background:var(--warn-bg)}
 .badge.bad{color:var(--bad); background:var(--bad-bg)}
 
@@ -571,7 +572,18 @@ header[data-testid="stHeader"]{
 """
 
 MAIN = "#0F766E"
-TONE = {"안심": ("ok", "#15803D"), "주의": ("warn", "#B45309"), "조심": ("bad", "#B91C1C")}
+TONE = {"안심": ("ok", "#15803D"), "보통": ("mid", "#475569"),
+        "주의": ("warn", "#B45309")}
+
+
+def grade_of(r) -> str:
+    """세 지표 중 켜진 신호가 몇 개냐로 등급을 매긴다.
+    판정 조건은 flags()의 정책 · 집중 · 하락과 똑같아서, 등급과 할 일 카드가
+    어긋나지 않는다. 가중합을 33 · 66으로 자르던 방식은 셋을 평균 내는 탓에
+    대부분이 가운데 칸으로 몰렸다."""
+    n = (int(r["정책점수"] >= 60) + int(r["집중점수"] >= 60) +
+         int(r["추세점수"] >= 60 or r["하락개월"] >= 4 or r["최근추세"] < -5))
+    return "주의" if n >= 2 else ("보통" if n == 1 else "안심")
 
 
 def html(s: str):
@@ -607,6 +619,7 @@ if df.empty:
     st.stop()
 
 m, stat, low_m, high_m, sim = build(df, min_share)
+stat["등급"] = stat.apply(grade_of, axis=1)   # 지도와 순위표도 같은 등급을 쓴다
 
 
 def fmt_ym(ym):
@@ -638,8 +651,6 @@ if _sel.empty:
     st.stop()
 row = _sel.iloc[0]
 score = row["리스크점수"]
-grade = "조심" if score >= 66 else ("주의" if score >= 33 else "안심")
-cls, accent = TONE[grade]
 
 d = m[(m["지역"] == gu) & (m["동"] == dong)].sort_values("crtr_ym")
 share = d["점유율"].to_numpy()
@@ -647,6 +658,9 @@ months = d["crtr_ym"].tolist()
 recent = share[-3:].mean()
 center, lowb, highb, slope = forecast(share, 3)
 sig = flags(row, slope)
+# 등급은 켜진 신호 개수로 매긴다. '지금 하면 좋을 일'과 같은 기준이라 둘이 어긋나지 않는다.
+grade = grade_of(row)
+cls, accent = TONE[grade]
 rank = int(stat["리스크점수"].rank(method="min", ascending=False)
            [(stat["지역"] == gu) & (stat["동"] == dong)].iloc[0])
 
@@ -1007,12 +1021,11 @@ with t0:
         else:
             mp["size"] = 120 + mp["평균점유율"] / mp["평균점유율"].max() * 500
 
-            def rgb(v):
-                if v >= 66:
-                    return "#B91C1C"
-                return "#B45309" if v >= 33 else "#15803D"
+            def rgb(g):          # 지도도 화면과 같은 등급 색을 쓴다
+                return {"주의": "#B45309", "보통": "#94A3B8",
+                        "안심": "#15803D"}.get(g, "#94A3B8")
 
-            mp["color"] = mp["리스크점수"].apply(rgb)
+            mp["color"] = mp["등급"].apply(rgb)
             sel = (mp["지역"] == gu) & (mp["동"] == dong)
             mp.loc[sel, "color"] = "#111827"
             mp.loc[sel, "size"] = mp["size"].max() * 1.3
@@ -1035,21 +1048,24 @@ with t0:
                     folium.CircleMarker(
                         location=[r.lat, r.lon],
                         radius=6 + r.평균점유율 / mp["평균점유율"].max() * 18,
-                        color="#111827" if picked else rgb(r.리스크점수),
+                        color="#111827" if picked else rgb(r.등급),
                         weight=3 if picked else 1,
                         fill=True, fill_opacity=0.65,
-                        fill_color=rgb(r.리스크점수),
-                        tooltip=f"{r.지역} {r.동} · 리스크 {r.리스크점수:.0f}점 "
-                                f"· 비중 {r.평균점유율:.2f}%").add_to(fm)
+                        fill_color=rgb(r.등급),
+                        tooltip=f"{r.지역} {r.동} · {r.등급} "
+                                f"· 몫 {r.평균점유율:.2f}%").add_to(fm)
                 st_folium(fm, height=460, use_container_width=True,
                           returned_objects=[])
             else:
                 st.map(mp, latitude="lat", longitude="lon",
                        size="size", color="color", zoom=10.5)
-            hot = mp.nlargest(5, "리스크점수")[["지역", "동", "리스크점수"]]
-            html('<p class="foot">리스크가 높은 상권 : ' +
-                 ", ".join(f"{r.지역} {r.동}({r.리스크점수:.0f})"
-                           for r in hot.itertuples()) + "</p>")
+            n_warn = int((mp["등급"] == "주의").sum())
+            hot = mp[mp["등급"] == "주의"].nlargest(5, "리스크점수")
+            html(f'<p class="foot">주황색이 주의, 회색이 보통, 초록색이 안심입니다. '
+                 f'지도에 올라온 {len(mp)}곳 가운데 주의가 {n_warn}곳입니다'
+                 + ("" if hot.empty else " — "
+                    + ", ".join(f"{r.지역} {r.동}" for r in hot.itertuples()))
+                 + ".</p>")
 
 with t1:
     html('<p class="foot">최근 1년간 결제액을 성별 · 나이대로 나눈 모습입니다. '
@@ -1140,10 +1156,12 @@ if view_mode == "분석용":
              '(잔존율 40% + 집중 30% + 하락 30%, 탐색적 가중치)</p>')
 
         st.write("")
-        html('<div class="sect"><h3>대전 전체 순위</h3></div>')
-        view = stat.copy()
-        view["등급"] = pd.cut(view["리스크점수"], [-1, 33, 66, 101],
-                            labels=["안심", "주의", "조심"])
+        cnt = stat["등급"].value_counts()
+        html('<div class="sect"><h3>대전 전체 순위</h3><p>분석한 '
+             f'{len(stat)}곳 가운데 안심 {int(cnt.get("안심", 0))}곳, '
+             f'보통 {int(cnt.get("보통", 0))}곳, 주의 {int(cnt.get("주의", 0))}곳입니다.'
+             '</p></div>')
+        view = stat.copy()      # 등급은 build 직후에 이미 붙여 두었다
         for c in ["리스크점수", "정책점수", "집중점수", "추세점수"]:
             view[c] = view[c].round(0)
         view["잔존율"] = view["잔존율"].round(1)
@@ -1169,7 +1187,21 @@ k-means 군집 분석으로 네 유형으로 묶었습니다. 순위로 바꾸�
 보고 붙인 것으로, 알고리즘이 지은 것이 아닙니다. '닮은 동네'의 닮음 정도는 같은
 네 값 사이의 거리를 0~100으로 환산한 값입니다.
 
-세 지표를 분석 대상 동네 안에서 순위로 환산해 0~100점으로 만들고 가중 합산합니다. 가중치는 검증된 값이 아니라 탐색적으로 정한 설계값입니다.
+세 지표를 분석 대상 동네 안에서 순위로 환산해 0~100점으로 만들고 가중 합산합니다. 가중치는 검증된 값이 아니라 탐색적으로 정한 설계값입니다. 이 합산 점수는 **흔들림 순위**를 매기는 데만 씁니다.
+
+**등급은 가중합이 아니라 켜진 신호의 개수로 매깁니다**
+
+세 지표 가운데 기준을 넘은 것이 몇 개인지 셉니다. 0개면 안심, 1개면 보통, 2개 이상이면 주의입니다.
+
+| 신호 | 켜지는 조건 |
+| --- | --- |
+| 저점에 약함 | 저점기 잔존율 점수 60점 이상 (대전 하위 40%) |
+| 손님층 쏠림 | 고객층 집중 점수 60점 이상 |
+| 하락 지속 | 하락 지속 점수 60점 이상, 또는 6개월 중 4개월 이상 하락, 또는 최근 3개월 추세 −5% 미만 |
+
+가중합을 33점 · 66점으로 잘라 등급을 매기던 방식을 바꾼 것입니다. 세 순위 점수를 평균 내면 값이 가운데로 몰려서, 어떤 자료를 넣어도 절반 넘는 동네가 가운데 등급에 떨어졌습니다. 동전 세 개를 던지면 앞면이 1~2개 나오는 경우가 대부분인 것과 같은 이치입니다. 신호 개수로 세면 분포가 고르게 갈리고, 무엇보다 '지금 하면 좋을 일' 카드가 쓰는 판정 기준과 같아져서 등급과 설명이 어긋나지 않습니다.
+
+등급은 절대적인 위험도가 아니라 **대전 안에서의 상대 위치**입니다. 분석 대상이 바뀌면 같은 동네의 등급도 달라질 수 있습니다.
 
 **무엇을 보여주지 못하나**
 
