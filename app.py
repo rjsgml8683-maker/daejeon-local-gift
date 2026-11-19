@@ -730,61 +730,89 @@ def next_ym(ym, k):
 
 
 fut = [next_ym(months[-1], i) for i in range(1, 4)]
-axis = months + fut
 band = "rgba(15,118,110,0.10)"
+yr_tick = [v for v in months if v.endswith("01")]
+yr_text = [f"{v[:4]}년" for v in yr_tick]
+AXFONT = dict(family="Pretendard Variable, Pretendard, sans-serif",
+              size=12, color="#64748B")
 
 fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=fut + fut[::-1], y=list(highb) + list(lowb)[::-1],
-    mode="lines",            # 점이 적으면 plotly가 마커를 붙여서 명시한다
-    fill="toself", fillcolor=band, line=dict(width=0),
-    hoverinfo="skip", showlegend=False))
-# 예상이 기대는 추세선. 마지막 달 값과 예상값이 뚝 끊겨 보이지 않도록 함께 그린다.
-# 예측 계산은 그대로 두고 그 선을 눈에 보이게만 한 것이다.
-n_fit = min(12, len(share))
-fig.add_trace(go.Scatter(
-    x=months[-n_fit:] + fut,
-    y=[center[0] - (n_fit - i) * slope for i in range(n_fit)] + list(center),
-    mode="lines", line=dict(color=MAIN, width=1.4, dash="dot"),
-    opacity=0.45, hoverinfo="skip", showlegend=False))
-fig.add_trace(go.Scatter(
-    x=months, y=share, mode="lines", name="지금까지",
-    line=dict(color=MAIN, width=2.4, shape="linear"),
-    hovertemplate="%{x|}<br>%{y:.2f}%<extra></extra>"))
-fig.add_trace(go.Scatter(
-    x=[months[-1]] + fut, y=[share[-1]] + list(center),
-    mode="lines+markers", name="앞으로 예상",
-    line=dict(color=MAIN, width=2.4, dash="dash"),
-    marker=dict(size=7, color="#FFFFFF", line=dict(color=MAIN, width=2)),
-    opacity=0.75, hovertemplate="%{x}<br>%{y:.2f}%<extra></extra>"))
+if view_mode == "사장님용":
+    # 사장님 화면에는 실제 흐름 하나만. 추세선과 95% 구간은 분석가의 도구다.
+    fig.add_trace(go.Scatter(
+        x=months, y=share, mode="lines", line=dict(color=MAIN, width=2.6),
+        fill="tozeroy", fillcolor="rgba(15,118,110,0.06)",
+        name=f"{dong}이 대전 전체에서 차지한 몫",
+        hovertemplate="%{x}<br>%{y:.2f}%<extra></extra>"))
+    fig.add_trace(go.Scatter(      # 마지막 달이 어디인지만 점으로 찍는다
+        x=[months[-1]], y=[share[-1]], mode="markers",
+        marker=dict(size=10, color=MAIN, line=dict(color="#FFFFFF", width=2)),
+        name=f"마지막 달 ({fmt_ym(months[-1])})", hoverinfo="skip"))
+    fig.update_layout(
+        height=310, margin=dict(l=8, r=8, t=8, b=8),
+        plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
+        font=AXFONT, hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.0,
+                    xanchor="left", x=0, bgcolor="rgba(0,0,0,0)",
+                    font=dict(size=11)),
+        xaxis=dict(type="category", categoryorder="array", categoryarray=months,
+                   showgrid=False, tickmode="array", tickvals=yr_tick,
+                   ticktext=yr_text, linecolor="#E5E7EB",
+                   ticks="outside", tickcolor="#E5E7EB"),
+        yaxis=dict(gridcolor="#F1F5F9", zeroline=False, ticksuffix="%",
+                   showline=False, rangemode="tozero"))
+else:
+    # 분석용에는 추세선과 예상, 95% 구간을 전부 보여 주고 범례를 붙인다
+    n_fit = min(12, len(share))
+    fig.add_trace(go.Scatter(
+        x=fut + fut[::-1], y=list(highb) + list(lowb)[::-1], mode="lines",
+        fill="toself", fillcolor=band, line=dict(width=0),
+        name="95% 범위", hoverinfo="skip"))
+    fig.add_trace(go.Scatter(
+        x=months[-n_fit:] + fut,
+        y=[center[0] - (n_fit - i) * slope for i in range(n_fit)] + list(center),
+        mode="lines", line=dict(color=MAIN, width=1.6, dash="dot"),
+        opacity=0.55, name="지난 1년 추세선", hoverinfo="skip"))
+    fig.add_trace(go.Scatter(
+        x=months, y=share, mode="lines", name="실제",
+        line=dict(color=MAIN, width=2.4),
+        hovertemplate="%{x}<br>%{y:.2f}%<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=fut, y=list(center), mode="markers", name="석 달 뒤 예상",
+        marker=dict(size=9, color="#FFFFFF", line=dict(color=MAIN, width=2.2)),
+        hovertemplate="%{x}<br>%{y:.2f}%<extra></extra>"))
+    fig.update_layout(
+        height=330, margin=dict(l=8, r=8, t=8, b=8),
+        plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
+        font=AXFONT, hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.0,
+                    xanchor="left", x=0, bgcolor="rgba(0,0,0,0)",
+                    font=dict(size=11)),
+        # 연월 문자열이 숫자로 읽혀 축이 어긋나지 않도록 범주축으로 고정한다
+        xaxis=dict(type="category", categoryorder="array",
+                   categoryarray=months + fut, showgrid=False, tickmode="array",
+                   tickvals=yr_tick + [fut[1]], ticktext=yr_text + ["예상"],
+                   linecolor="#E5E7EB", ticks="outside", tickcolor="#E5E7EB"),
+        yaxis=dict(gridcolor="#F1F5F9", zeroline=False, ticksuffix="%",
+                   showline=False))
 
-# 해가 바뀌는 달만 눈금으로 쓰고, 예측 구간은 따로 표시한다
-ticks = [v for v in months if v.endswith("01")] + [fut[1]]
-labels = [f"{v[:4]}년" for v in months if v.endswith("01")] + ["예상"]
-fig.update_layout(
-    height=320, margin=dict(l=8, r=8, t=8, b=8),
-    plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
-    font=dict(family="Pretendard Variable, Pretendard, sans-serif",
-              size=12, color="#64748B"),
-    hovermode="x unified", showlegend=False,
-    # 연월 문자열이 숫자로 읽혀 축이 어긋나지 않도록 범주축으로 고정한다
-    xaxis=dict(type="category", categoryorder="array", categoryarray=axis,
-               showgrid=False, tickmode="array", tickvals=ticks, ticktext=labels,
-               linecolor="#E5E7EB", ticks="outside", tickcolor="#E5E7EB"),
-    yaxis=dict(gridcolor="#F1F5F9", zeroline=False, ticksuffix="%",
-               showline=False))
 with st.container(border=True):
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False})
     mape = backtest(tuple(tuple(v) for v in
                           m.pivot_table(index=["지역", "동"], columns="crtr_ym",
                                         values="점유율").dropna().to_numpy()))
-    html('<p class="foot">점선은 지난 1년 흐름을 직선 하나로 요약한 추세선이고, '
-         '예상은 그 선을 석 달 더 이은 값입니다. 마지막 달이 추세선보다 높거나 낮았다면 '
-         '예상과 바로 이어지지 않습니다. 옅은 띠는 95% 범위입니다. '
-         + (f"같은 방식으로 과거를 되짚으면 석 달 뒤 값이 실제와 중앙값 기준 "
-            f"{mape:.0f}% 어긋났습니다.</p>" if mape == mape else
-            "단순 추정이라 실제와 다를 수 있습니다.</p>"))
+    miss = (f"같은 방식으로 과거를 되짚으면 석 달 뒤 값이 실제와 중앙값 기준 "
+            f"{mape:.0f}% 어긋났습니다." if mape == mape else
+            "단순 추정이라 실제와 다를 수 있습니다.")
+    if view_mode == "사장님용":
+        html(f'<p class="foot">이 흐름이 그대로 이어진다면 석 달 뒤에는 '
+             f'<b>{center[-1]:.2f}%</b> 언저리가 됩니다. 한 달 값은 오르내림이 커서 '
+             f'마지막 달이 아니라 지난 1년 흐름을 기준으로 본 값입니다. {miss}</p>')
+    else:
+        html('<p class="foot">점선은 지난 1년을 직선 하나로 요약한 추세선이고, '
+             '동그라미 셋이 그 선을 석 달 더 이은 값입니다. 마지막 달이 추세선보다 '
+             '높거나 낮아도 예상은 추세선을 따릅니다. ' + miss + '</p>')
 
 # ── 이웃과 견주면
 st.write("")
