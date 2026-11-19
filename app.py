@@ -491,7 +491,9 @@ header[data-testid="stHeader"]{
 
 .sect h3{font-size:18px; font-weight:700; letter-spacing:-.02em; margin:0 0 4px}
 .sect p{font-size:13.5px; color:var(--sub); margin:0 0 4px; max-width:70ch}
-.foot{font-size:12.5px; color:var(--sub); line-height:1.6; max-width:74ch; margin:6px 0 0}
+/* .foot 하나만으로는 스트림릿 기본 문단 규칙에 밀려 16px로 나온다. 한 단계 더 준다 */
+.stApp .foot{font-size:12.5px; color:var(--sub); line-height:1.6;
+  max-width:74ch; margin:6px 0 0}
 
 .bars{background:var(--card); border:1px solid var(--line); border-radius:12px;
   padding:20px; display:flex; flex-direction:column; gap:14px}
@@ -543,7 +545,7 @@ header[data-testid="stHeader"]{
 .like .right span{font-size:12px; color:var(--sub)}
 .like .right b.up{color:var(--ok)}
 
-.srcline{font-size:12px; color:var(--sub); border-top:1px solid var(--line);
+.stApp .srcline{font-size:12px; color:var(--sub); border-top:1px solid var(--line);
   padding-top:16px; margin-top:28px; line-height:1.6}
 
 @media (max-width:860px){
@@ -666,13 +668,13 @@ html(f"""
   <div class="shake">
     <div class="cap">
       <b>달마다 이만큼 움직였습니다</b>
-      <span>막대 하나가 한 달입니다</span>
+      <span>왼쪽부터 한 달씩입니다</span>
     </div>
     <div class="spark">{bars}</div>
     <div class="axis"><span>{fmt_ym(span[0])}</span><span>{fmt_ym(span[-1])}</span></div>
-    <p class="how">막대가 높은 달일수록 대전 전체 지역화폐 결제에서 {dong}이
-      차지한 몫이 컸습니다. 들쭉날쭉할수록 매출이 달마다 크게 흔들렸다는 뜻입니다.
-      <b>진한 막대 셋</b>이 최근 석 달입니다.</p>
+    <p class="how">높이 솟은 달일수록 대전 전체 지역화폐 결제에서 {dong}이 차지한
+      몫이 컸습니다. 높낮이가 들쭉날쭉할수록 매출이 달마다 크게 흔들렸다는 뜻입니다.
+      <b>진한 색 셋</b>이 최근 석 달입니다.</p>
   </div>
 </div>""")
 
@@ -681,6 +683,8 @@ keep_avg = stat["잔존율"].mean()
 keep_gap = row["잔존율"] - keep_avg
 trend = row["최근추세"]
 pct_rank = rank / len(stat) * 100
+# 사장님용에서는 쉬운 이름으로, 분석용에서는 본래 용어로 부른다
+KEEP = "저점기 잔존율" if view_mode == "분석용" else "저점 유지율"
 
 html(f"""
 <div class="kpis">
@@ -696,7 +700,7 @@ html(f"""
     <div class="note">대전 {len(stat)}개 동네 중 <b>상위 {pct_rank:.0f}%</b></div>
   </div>
   <div class="kpi">
-    <div class="name">저점기 잔존율</div>
+    <div class="name">{KEEP}</div>
     <div class="val">{row['잔존율']:.0f}<u>%</u></div>
     <div class="note"><b class="{'up' if keep_gap >= 0 else 'dn'}">
       {'↑' if keep_gap >= 0 else '↓'} {abs(keep_gap):.1f}%p</b>
@@ -790,9 +794,10 @@ vals = [(dong, row["잔존율"], True),
         (f"{gu} 평균", gu_keep, False),
         ("대전 평균", keep_avg, False)]
 top = max(v for _, v, _ in vals) or 1
+keep_tag = f"<em>{KEEP}</em>"
 rows_html = "".join(f"""
   <div class="bar{' me' if me else ''}">
-    <div class="top"><b>{nm}{'<em>저점기 잔존율</em>' if me else ''}</b>
+    <div class="top"><b>{nm}{keep_tag if me else ''}</b>
       <span>{v:.1f}%</span></div>
     <div class="track"><div class="fill" style="width:{max(v / top * 100, 1.5):.0f}%"></div></div>
   </div>""" for nm, v, me in vals)
@@ -806,7 +811,8 @@ elif _ratio >= 0.5:
 else:
     cmp_word = f"대전 평균의 {keep_avg / max(row['잔존율'], 0.1):.0f}분의 1 수준입니다"
 html(f'<div class="bars">{rows_html}</div>'
-     f'<p class="foot">잔존율이 낮으면 대전 전체 결제가 뜸해질 때 이 동네가 더 크게 '
+     f'<p class="foot">{KEEP}은 대전 전체 결제가 가장 적었던 달에 이 동네 결제액이 '
+     f'가장 많았던 달의 몇 %였는지입니다. 낮을수록 대전 전체가 꺾일 때 함께 크게 '
      f'줄어듭니다. {dong}은 {cmp_word}</p>')
 
 # ── 지금 하면 좋을 일
@@ -873,9 +879,13 @@ if st.secrets.get("GEMINI_API_KEY", ""):
             rest = [(k, v) for k, v in parts if k != "핵심"]
         else:   # 꼬리표가 안 붙어 오면 통째로 보여 준다
             head, rest = text, []
-        boxes = "".join(
-            f'<div class="box {LABELS.get(k, ("", ""))[0]}"><b>{k}</b><p>{v}</p></div>'
-            for k, v in rest)
+        # 항목이 홀수면 마지막 한 장이 반쪽으로 남으므로 한 줄을 다 쓰게 한다
+        boxes = ""
+        for i, (k, v) in enumerate(rest):
+            alone = len(rest) % 2 == 1 and i == len(rest) - 1
+            boxes += (f'<div class="box {LABELS.get(k, ("", ""))[0]}"'
+                      f'{" style=\"grid-column:1 / -1\"" if alone else ""}>'
+                      f'<b>{k}</b><p>{v}</p></div>')
         html(f"""
 <div class="ai">
   <div class="head">
@@ -926,7 +936,7 @@ with tw:
   </div>
   <div class="body">
     <b>{sgu} {sdong}</b>
-    <p>소비 몫 {r2['평균점유율']:.2f}% &nbsp;|&nbsp; 잔존율 {r2['잔존율']:.1f}%</p>
+    <p>소비 몫 {r2['평균점유율']:.2f}% &nbsp;|&nbsp; {KEEP} {r2['잔존율']:.1f}%</p>
   </div>
   <div class="right">
     <b class="{'up' if up else ''}">{move}</b><span>최근 석 달</span>
@@ -942,7 +952,7 @@ with tw:
                     "동네 사정이 아니라 우리 상권만의 변화일 수 있습니다.")
         elif ups == 0 and not me_up:
             tail = " 닮은 동네들도 함께 내려가는 중입니다. 우리 가게만의 문제가 아닐 수 있습니다."
-        html('<p class="foot">소비 규모, 흔들림, 저점기 잔존율, 계절 흐름 네 가지가 '
+        html(f'<p class="foot">소비 규모, 흔들림, {KEEP}, 계절 흐름 네 가지가 '
              f'가까운 순서입니다.{tail}</p>')
 
         st.write("")
@@ -953,7 +963,7 @@ with tw:
                    평균흔들림=("변동계수", "mean"))
               .sort_values("평균흔들림").round(2).reset_index())
         st.dataframe(tp, hide_index=True, use_container_width=True)
-        html('<p class="foot">네 가지 수치(소비 규모 · 흔들림 · 저점기 잔존율 · 계절 흐름)로 '
+        html(f'<p class="foot">네 가지 수치(소비 규모, 흔들림, {KEEP}, 계절 흐름)로 '
              '묶은 뒤, 묶음별 평균 흔들림에 따라 이름을 붙였습니다.</p>')
 
 with t0:
@@ -977,8 +987,16 @@ with t0:
             mp.loc[sel, "color"] = "#111827"
             mp.loc[sel, "size"] = mp["size"].max() * 1.3
             if HAS_FOLIUM:
-                fm = folium.Map(location=[36.345, 127.385], zoom_start=12,
+                # 탭이 숨어 있는 동안 지도 칸의 너비가 0이라 fit_bounds가 세계지도로
+                # 풀려 버린다. 중심과 배율을 직접 주고 축소 한계도 걸어 둔다.
+                here = mp[(mp["지역"] == gu) & (mp["동"] == dong)]
+                focus = ([float(here["lat"].iloc[0]), float(here["lon"].iloc[0])]
+                         if not here.empty
+                         else [float(mp["lat"].mean()), float(mp["lon"].mean())])
+                fm = folium.Map(location=focus, zoom_start=12,
                                 tiles=None, control_scale=True)
+                # min_zoom 인자는 타일에만 붙고 지도에는 안 걸려서 직접 넣는다
+                fm.options["minZoom"] = 10
                 folium.TileLayer(
                     tiles="https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png",
                     attr="VWorld", name="브이월드").add_to(fm)
@@ -993,8 +1011,6 @@ with t0:
                         fill_color=rgb(r.리스크점수),
                         tooltip=f"{r.지역} {r.동} · 리스크 {r.리스크점수:.0f}점 "
                                 f"· 비중 {r.평균점유율:.2f}%").add_to(fm)
-                fm.fit_bounds([[mp["lat"].min(), mp["lon"].min()],
-                               [mp["lat"].max(), mp["lon"].max()]])
                 st_folium(fm, height=460, use_container_width=True,
                           returned_objects=[])
             else:
@@ -1111,7 +1127,7 @@ if view_mode == "분석용":
 
 | 지표 | 가중치 | 무엇을 재나 |
 | --- | --- | --- |
-| 저점기 잔존율 | 40% | 대전 전체 결제가 가장 적었던 달의 결제액이, 가장 많았던 달의 몇 %인지. 낮을수록 전체 흐름에 크게 휩쓸린다. 저점의 원인이 정책인지는 이 지표만으로 확인되지 않는다 |
+| 저점기 잔존율 | 40% | 대전 전체 결제가 가장 적었던 달의 결제액이, 가장 많았던 달의 몇 %인지. 낮을수록 전체 흐름에 크게 휩쓸린다. 저점의 원인이 정책인지는 이 지표만으로 확인되지 않는다. 사장님용 화면에서는 **저점 유지율**로 부른다 |
 | 고객층 집중 | 30% | 성별 × 연령대 결제액의 허핀달 지수. 한 집단에 쏠릴수록 그 집단의 소비가 줄 때 타격이 크다 |
 | 하락 지속 | 30% | 최근 6개월 중 전월보다 낮았던 달 수와 3개월 추세 |
 
