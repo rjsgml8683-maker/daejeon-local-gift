@@ -346,8 +346,19 @@ CSS = """
 }
 
 /* 바탕과 글꼴 */
-html, body, [class*="st-"], button, input, select, textarea{
+/* 스트림릿이 h1~h6에 자기 폰트를 직접 걸어 두어 상속만으로는 안 바뀐다 */
+html, body, [class*="st-"], button, input, select, textarea,
+h1, h2, h3, h4, h5, h6, p, li, td, th, label, b, em, u{
   font-family:'Pretendard Variable',Pretendard,system-ui,-apple-system,sans-serif !important;
+}
+/* 아이콘은 글자를 기호로 바꿔 그리는 전용 폰트를 쓴다.
+   위 규칙에 덮이면 'keyboard_double_arrow_right' 같은 이름이 글자로 나온다. */
+[data-testid="stIconMaterial"],
+span[translate="no"],
+.material-symbols-rounded, .material-symbols-outlined,
+[class*="material-symbols"]{
+  font-family:'Material Symbols Rounded','Material Symbols Outlined',
+              'Material Icons' !important;
 }
 body, .stApp{background:var(--bg) !important}
 .stApp, .stApp p, .stApp li, .stApp span, .stApp div{
