@@ -393,10 +393,16 @@ header[data-testid="stHeader"]{
 }
 
 [data-testid="stButton"] button{
-  background:var(--main); color:#fff; border:0; border-radius:10px;
+  background:var(--main); border:0; border-radius:10px;
   font-weight:600; font-size:15px; padding:13px 20px;
 }
-[data-testid="stButton"] button:hover{background:var(--main-hover); color:#fff}
+[data-testid="stButton"] button:hover{background:var(--main-hover)}
+/* 버튼 글자는 안쪽 상자에 들어 있어 본문 색에 덮인다. 통째로 흰색으로 둔다 */
+[data-testid="stButton"] button,
+[data-testid="stButton"] button *{color:#FFFFFF !important}
+
+/* 제목 옆에 자동으로 붙는 '이 제목으로 가는 링크' 아이콘을 숨긴다 */
+[data-testid="stHeaderActionElements"]{display:none !important}
 
 /* 보기 모드 라디오 → 분절 버튼 */
 [data-testid="stRadioGroup"]{
@@ -466,6 +472,10 @@ header[data-testid="stHeader"]{
 .spark{display:flex; align-items:flex-end; gap:2px; height:40px}
 .spark i{flex:1; background:#CBD5E1; border-radius:2px 2px 0 0; display:block}
 .spark i.hi{background:var(--main)}
+.axis{display:flex; justify-content:space-between; font-size:12px;
+  color:var(--sub); margin-top:6px}
+.shake .how{font-size:12.5px; color:var(--sub); line-height:1.55; margin:10px 0 0}
+.shake .how b{color:var(--main); font-weight:700}
 
 .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:8px}
 .kpi{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px}
@@ -577,9 +587,6 @@ with st.sidebar:
     with st.expander("분석 조건 (전문가용)"):
         years = st.slider("분석 기간 (연월)", 2023, 2026, (2024, 2026))
         min_share = st.number_input("최소 평균 비중 (%)", 0.0, 5.0, 0.3, 0.1)
-        if st.button("가양동 · 가오동 불러오기", use_container_width=True):
-            st.session_state.update(gu="동구", dong="가양동",
-                                    pick=["동구 가양동", "동구 가오동"])
     start_ym, end_ym = f"{years[0]}01", f"{years[1]}12"
     st.divider()
     st.caption("한국조폐공사가 공개한 지역사랑상품권 결제 자료로 만들었습니다. "
@@ -659,9 +666,13 @@ html(f"""
   <div class="shake">
     <div class="cap">
       <b>달마다 이만큼 움직였습니다</b>
-      <span>대전 전체에서 {dong}이 차지한 몫</span>
+      <span>막대 하나가 한 달입니다</span>
     </div>
     <div class="spark">{bars}</div>
+    <div class="axis"><span>{fmt_ym(span[0])}</span><span>{fmt_ym(span[-1])}</span></div>
+    <p class="how">막대가 높은 달일수록 대전 전체 지역화폐 결제에서 {dong}이
+      차지한 몫이 컸습니다. 들쭉날쭉할수록 매출이 달마다 크게 흔들렸다는 뜻입니다.
+      <b>진한 막대 셋</b>이 최근 석 달입니다.</p>
   </div>
 </div>""")
 
