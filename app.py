@@ -354,9 +354,19 @@ body, .stApp{background:var(--bg) !important}
   color:var(--ink); word-break:keep-all;
 }
 .block-container{
-  max-width:1180px; padding:18px 18px 72px !important;
+  /* 위 여백은 사이드바 여는 버튼이 제목과 겹치지 않을 만큼만 남긴다 */
+  max-width:1180px; padding:52px 18px 72px !important;
 }
-#MainMenu, footer, header[data-testid="stHeader"]{display:none}
+/* 머리띠를 숨기면 사이드바 여는 버튼까지 사라진다. 투명하게만 만든다 */
+header[data-testid="stHeader"]{
+  background:transparent !important; box-shadow:none !important;
+}
+#MainMenu, footer, [data-testid="stDecoration"]{display:none !important}
+/* 사이드바 여는 버튼 — 흐릿해서 안 보이지 않게 테두리를 준다 */
+[data-testid="stExpandSidebarButton"]{
+  background:var(--card) !important; border:1px solid var(--line) !important;
+  border-radius:9px !important;
+}
 
 /* 스트림릿 기본 위젯 다듬기 */
 [data-testid="stHorizontalBlock"]{flex-wrap:wrap; gap:10px}
@@ -520,7 +530,7 @@ body, .stApp{background:var(--bg) !important}
   .todos, .ai .grid{grid-template-columns:1fr}
 }
 @media (max-width:560px){
-  .block-container{padding:14px 14px 56px !important}
+  .block-container{padding:50px 14px 56px !important}
   .kpi{padding:14px 15px}
   .kpi .val{font-size:25px}
   .hero{padding:20px; border-radius:14px}
@@ -703,6 +713,14 @@ fig.add_trace(go.Scatter(
     mode="lines",            # 점이 적으면 plotly가 마커를 붙여서 명시한다
     fill="toself", fillcolor=band, line=dict(width=0),
     hoverinfo="skip", showlegend=False))
+# 예상이 기대는 추세선. 마지막 달 값과 예상값이 뚝 끊겨 보이지 않도록 함께 그린다.
+# 예측 계산은 그대로 두고 그 선을 눈에 보이게만 한 것이다.
+n_fit = min(12, len(share))
+fig.add_trace(go.Scatter(
+    x=months[-n_fit:] + fut,
+    y=[center[0] - (n_fit - i) * slope for i in range(n_fit)] + list(center),
+    mode="lines", line=dict(color=MAIN, width=1.4, dash="dot"),
+    opacity=0.45, hoverinfo="skip", showlegend=False))
 fig.add_trace(go.Scatter(
     x=months, y=share, mode="lines", name="지금까지",
     line=dict(color=MAIN, width=2.4, shape="linear"),
@@ -735,7 +753,9 @@ with st.container(border=True):
     mape = backtest(tuple(tuple(v) for v in
                           m.pivot_table(index=["지역", "동"], columns="crtr_ym",
                                         values="점유율").dropna().to_numpy()))
-    html('<p class="foot">예상은 지난 흐름을 그대로 이어 본 값이고, 옅은 띠는 95% 범위입니다. '
+    html('<p class="foot">점선은 지난 1년 흐름을 직선 하나로 요약한 추세선이고, '
+         '예상은 그 선을 석 달 더 이은 값입니다. 마지막 달이 추세선보다 높거나 낮았다면 '
+         '예상과 바로 이어지지 않습니다. 옅은 띠는 95% 범위입니다. '
          + (f"같은 방식으로 과거를 되짚으면 석 달 뒤 값이 실제와 중앙값 기준 "
             f"{mape:.0f}% 어긋났습니다.</p>" if mape == mape else
             "단순 추정이라 실제와 다를 수 있습니다.</p>"))
